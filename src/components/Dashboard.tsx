@@ -14,7 +14,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onArticleClick }) => {
   const { user, isAuthenticated } = useAuth();
   const { newsState, userPreferences, updateUserPreferences } = useStore();
   const { theme } = useTheme();
-  const [activeTab, setActiveTab] = useState<'profile' | 'preferences' | 'saved' | 'history' | 'analytics'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'preferences' | 'history' | 'analytics'>('profile');
   const [editMode, setEditMode] = useState(false);
   const [editedName, setEditedName] = useState(user?.name || '');
   const [allArticles, setAllArticles] = useState<Article[]>([]);
@@ -237,7 +237,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onArticleClick }) => {
         {[
           { id: 'profile', label: '👤 Profile' },
           { id: 'preferences', label: '⚙️ Preferences' },
-          { id: 'saved', label: '🔖 Saved Bookmarks' },
           { id: 'history', label: '📖 History Logs' },
           { id: 'analytics', label: '📊 Reading Analytics' }
         ].map((tab) => {
@@ -629,44 +628,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onArticleClick }) => {
         </div>
       )}
 
-      {/* Saved Articles Tab */}
-      {activeTab === 'saved' && (
-        <div className="animate-fade-in-up">
-          {savedArticles.length === 0 ? (
-            <div 
-              className="glass-panel"
-              style={{
-                borderRadius: '20px',
-                padding: '80px 20px',
-                textAlign: 'center',
-                boxShadow: isDark ? '0 10px 30px rgba(0,0,0,0.4)' : '0 10px 30px rgba(99, 102, 241, 0.05)'
-              }}
-            >
-              <div style={{ fontSize: '64px', marginBottom: '20px', animation: 'float 4s ease-in-out infinite' }}>🔖</div>
-              <h3 style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-heading)', fontWeight: '800', fontSize: '22px', marginBottom: '8px' }}>
-                Bookmarks Empty
-              </h3>
-              <p style={{ color: 'var(--text-secondary)', fontWeight: '500' }}>
-                Articles you bookmark while browsing will appear on this layout tab.
-              </p>
-            </div>
-          ) : (
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
-              gap: '24px'
-            }}>
-              {savedArticles.map((article) => (
-                <ArticleCard
-                  key={article.id}
-                  article={article}
-                  onClick={() => onArticleClick(article)}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+
 
       {/* Reading History Tab */}
       {activeTab === 'history' && (
