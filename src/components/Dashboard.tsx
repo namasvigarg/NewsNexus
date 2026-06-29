@@ -361,30 +361,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onArticleClick }) => {
               </div>
             </div>
 
-            <div>
-              <label style={{
-                display: 'block',
-                fontSize: '13px',
-                fontWeight: '700',
-                textTransform: 'uppercase',
-                letterSpacing: '0.5px',
-                marginBottom: '8px',
-                color: 'var(--text-secondary)'
-              }}>
-                Security ID
-              </label>
-              <div style={{
-                padding: '14px 18px',
-                borderRadius: '12px',
-                border: '1px solid var(--border-color)',
-                backgroundColor: isDark ? 'rgba(15, 23, 42, 0.3)' : 'rgba(241, 245, 249, 0.5)',
-                color: 'var(--text-secondary)',
-                fontSize: '13px',
-                fontFamily: 'monospace'
-              }}>
-                {user.id}
-              </div>
-            </div>
+
 
             <div style={{
               display: 'grid',
