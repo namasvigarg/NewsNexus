@@ -3,33 +3,40 @@ import { useTheme } from '../context/ThemeContext';
 
 export const ThemeToggle: React.FC = () => {
   const { theme, toggleTheme } = useTheme();
+  const isLight = theme === 'light';
 
   return (
     <button
       onClick={toggleTheme}
       style={{
-        padding: '8px 12px',
-        borderRadius: '20px',
-        border: 'none',
-        backgroundColor: theme === 'light' ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.3)',
-        color: 'white',
+        padding: '10px 14px',
+        borderRadius: '9999px',
+        border: '1px solid var(--border-color)',
+        backgroundColor: 'var(--glass-bg)',
+        color: 'var(--text-primary)',
         cursor: 'pointer',
-        fontSize: '20px',
+        fontSize: '18px',
         display: 'flex',
         alignItems: 'center',
+        justifyContent: 'center',
         gap: '8px',
-        transition: 'all 0.3s',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+        transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
+        boxShadow: 'var(--shadow-sm)',
+        outline: 'none'
       }}
       onMouseEnter={(e) => {
-        e.currentTarget.style.backgroundColor = theme === 'light' ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.4)';
+        e.currentTarget.style.transform = 'scale(1.1) rotate(15deg)';
+        e.currentTarget.style.borderColor = 'var(--accent-purple)';
+        e.currentTarget.style.boxShadow = '0 0 12px rgba(124, 58, 237, 0.2)';
       }}
       onMouseLeave={(e) => {
-        e.currentTarget.style.backgroundColor = theme === 'light' ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.3)';
+        e.currentTarget.style.transform = 'scale(1) rotate(0deg)';
+        e.currentTarget.style.borderColor = 'var(--border-color)';
+        e.currentTarget.style.boxShadow = 'var(--shadow-sm)';
       }}
-      title={theme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
+      title={isLight ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
     >
-      {theme === 'light' ? '🌙' : '☀️'}
+      {isLight ? '🌙' : '☀️'}
     </button>
   );
 };

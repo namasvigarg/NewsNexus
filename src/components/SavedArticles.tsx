@@ -53,14 +53,10 @@ export const SavedArticles: React.FC<SavedArticlesProps> = ({ onArticleClick }) 
 
   if (!user) {
     return (
-      <div style={{ textAlign: 'center', padding: '50px' }}>
-        <div style={{ fontSize: '48px', marginBottom: '20px' }}>🔒</div>
-        <h2 style={{ color: isDark ? '#f1f5f9' : '#212121', marginBottom: '10px' }}>
-          Login Required
-        </h2>
-        <p style={{ color: isDark ? '#94a3b8' : '#666' }}>
-          Please login to view your saved articles
-        </p>
+      <div style={{ textAlign: 'center', padding: '80px 20px' }}>
+        <div style={{ fontSize: '64px', marginBottom: '24px', animation: 'float 4s infinite ease-in-out' }}>🔒</div>
+        <h2 style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-heading)', fontWeight: '800' }}>Credentials Required</h2>
+        <p style={{ color: 'var(--text-secondary)', marginTop: '8px' }}>Please login to view saved bookmarks.</p>
       </div>
     );
   }
@@ -72,37 +68,55 @@ export const SavedArticles: React.FC<SavedArticlesProps> = ({ onArticleClick }) 
 
   if (savedArticles.length === 0) {
     return (
-      <div style={{ textAlign: 'center', padding: '50px', maxWidth: '500px', margin: '0 auto' }}>
-        <div style={{ fontSize: '48px', marginBottom: '20px' }}>🔖</div>
-        <h2 style={{ 
-          color: isDark ? '#f1f5f9' : '#212121', 
-          marginBottom: '10px' 
+      <div 
+        className="glass-panel animate-fade-in-up" 
+        style={{ 
+          textAlign: 'center', 
+          padding: '60px 40px', 
+          maxWidth: '520px', 
+          margin: '40px auto',
+          borderRadius: '20px',
+          boxShadow: isDark ? '0 10px 30px rgba(0,0,0,0.4)' : '0 10px 30px rgba(99, 102, 241, 0.05)'
+        }}
+      >
+        <div style={{ fontSize: '64px', marginBottom: '24px', animation: 'float 4s infinite ease-in-out' }}>🔖</div>
+        <h3 style={{ 
+          fontFamily: 'var(--font-heading)',
+          fontWeight: '800',
+          fontSize: '22px',
+          marginBottom: '12px',
+          color: 'var(--text-primary)'
         }}>
-          No Saved Articles
-        </h2>
-        <p style={{ color: isDark ? '#94a3b8' : '#666', marginBottom: '20px' }}>
-          You haven't saved any articles yet. Click the bookmark icon on any article to save it for later.
+          Bookmarks are Empty
+        </h3>
+        <p style={{ color: 'var(--text-secondary)', fontWeight: '500', lineHeight: '1.6', marginBottom: '20px' }}>
+          Bookmarks you save while reading will appear here. Click the bookmark icon on any article card to pin it.
         </p>
       </div>
     );
   }
 
   return (
-    <div>
+    <div className="animate-fade-in">
       <h2 style={{ 
-        margin: '0 0 20px 0', 
-        fontSize: '24px', 
-        fontWeight: 'bold',
-        color: isDark ? '#f1f5f9' : '#212121'
+        margin: '0 0 24px 0', 
+        fontSize: '28px', 
+        fontWeight: '800',
+        fontFamily: 'var(--font-heading)',
+        color: 'var(--text-primary)',
+        letterSpacing: '-0.5px'
       }}>
-        🔖 Saved Articles
+        Saved Bookmarks
       </h2>
 
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
-        gap: '20px'
-      }}>
+      <div 
+        className="animate-fade-in-up"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
+          gap: '24px'
+        }}
+      >
         {savedArticles.map((article) => (
           <ArticleCard
             key={article.id}

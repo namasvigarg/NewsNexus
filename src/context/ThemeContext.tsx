@@ -16,7 +16,7 @@ interface ThemeProviderProps {
 export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
   const [theme, setTheme] = useState<Theme>(() => {
     const saved = localStorage.getItem('newsNexusTheme');
-    return (saved as Theme) || 'light';
+    return (saved as Theme) || 'dark';
   });
 
   useEffect(() => {

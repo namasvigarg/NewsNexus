@@ -7,11 +7,16 @@ interface User {
   savedArticles: string[];
 }
 
+interface AuthResult {
+  success: boolean;
+  error?: string;
+}
+
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
-  login: (email: string, password: string) => Promise<boolean>;
-  signup: (email: string, password: string, name: string) => Promise<boolean>;
+  login: (email: string, password: string) => Promise<AuthResult>;
+  signup: (email: string, password: string, name: string) => Promise<AuthResult>;
   logout: () => void;
   saveArticle: (articleId: string) => void;
   unsaveArticle: (articleId: string) => void;
@@ -20,6 +25,8 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
 interface AuthProviderProps {
   children: ReactNode;
 }
@@ -27,111 +34,128 @@ interface AuthProviderProps {
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
 
-  // Load user from localStorage on mount
+  // Verification hook on mount to check existing session tokens
   useEffect(() => {
-    const storedUser = localStorage.getItem('newsNexusUser');
-    if (storedUser) {
-      setUser(JSON.parse(storedUser));
-    }
+    const checkAuth = async () => {
+      const token = localStorage.getItem('newsNexusToken');
+      if (token) {
+        try {
+          const response = await fetch(`${API_BASE}/user/me`, {
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            setUser(data.user);
+          } else {
+            localStorage.removeItem('newsNexusToken');
+          }
+        } catch (error) {
+          console.error('Session verification error:', error);
+          localStorage.removeItem('newsNexusToken');
+        }
+      }
+    };
+    checkAuth();
   }, []);
 
-  const signup = async (email: string, password: string, name: string): Promise<boolean> => {
+  const signup = async (email: string, password: string, name: string): Promise<AuthResult> => {
     try {
-      // Check if user already exists
-      const users = JSON.parse(localStorage.getItem('newsNexusUsers') || '[]');
-      const existingUser = users.find((u: any) => u.email === email);
+      const response = await fetch(`${API_BASE}/user/signup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, name })
+      });
       
-      if (existingUser) {
-        alert('User with this email already exists!');
-        return false;
+      const data = await response.json();
+      if (!response.ok) {
+        return { success: false, error: data.error || 'Registration failed' };
       }
-
-      // Create new user
-      const newUser: User & { password: string } = {
-        id: `user_${Date.now()}`,
-        email,
-        name,
-        password, // In production, hash this!
-        savedArticles: []
-      };
-
-      users.push(newUser);
-      localStorage.setItem('newsNexusUsers', JSON.stringify(users));
-
-      // Login the user
-      const { password: _, ...userWithoutPassword } = newUser;
-      setUser(userWithoutPassword);
-      localStorage.setItem('newsNexusUser', JSON.stringify(userWithoutPassword));
       
-      return true;
-    } catch (error) {
+      localStorage.setItem('newsNexusToken', data.token);
+      setUser(data.user);
+      return { success: true };
+    } catch (error: any) {
       console.error('Signup error:', error);
-      return false;
+      return { success: false, error: error.message || 'Signup request failed' };
     }
   };
 
-  const login = async (email: string, password: string): Promise<boolean> => {
+  const login = async (email: string, password: string): Promise<AuthResult> => {
     try {
-      const users = JSON.parse(localStorage.getItem('newsNexusUsers') || '[]');
-      const foundUser = users.find((u: any) => u.email === email && u.password === password);
-
-      if (!foundUser) {
-        alert('Invalid email or password!');
-        return false;
-      }
-
-      const { password: _, ...userWithoutPassword } = foundUser;
-      setUser(userWithoutPassword);
-      localStorage.setItem('newsNexusUser', JSON.stringify(userWithoutPassword));
+      const response = await fetch(`${API_BASE}/user/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
       
-      return true;
-    } catch (error) {
+      const data = await response.json();
+      if (!response.ok) {
+        return { success: false, error: data.error || 'Authentication failed' };
+      }
+      
+      localStorage.setItem('newsNexusToken', data.token);
+      setUser(data.user);
+      return { success: true };
+    } catch (error: any) {
       console.error('Login error:', error);
-      return false;
+      return { success: false, error: error.message || 'Login request failed' };
     }
   };
 
   const logout = () => {
     setUser(null);
-    localStorage.removeItem('newsNexusUser');
+    localStorage.removeItem('newsNexusToken');
   };
 
-  const saveArticle = (articleId: string) => {
+  const saveArticle = async (articleId: string) => {
     if (!user) return;
-
-    const updatedUser = {
-      ...user,
-      savedArticles: [...user.savedArticles, articleId]
-    };
-
-    setUser(updatedUser);
-    localStorage.setItem('newsNexusUser', JSON.stringify(updatedUser));
-
-    // Update in users array
-    const users = JSON.parse(localStorage.getItem('newsNexusUsers') || '[]');
-    const updatedUsers = users.map((u: any) => 
-      u.id === user.id ? { ...u, savedArticles: updatedUser.savedArticles } : u
-    );
-    localStorage.setItem('newsNexusUsers', JSON.stringify(updatedUsers));
+    const token = localStorage.getItem('newsNexusToken');
+    if (!token) return;
+    
+    try {
+      const response = await fetch(`${API_BASE}/user/save/${user.id}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ articleId })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setUser(prev => prev ? { ...prev, savedArticles: data.savedArticles } : null);
+      }
+    } catch (error) {
+      console.error('Error saving article:', error);
+    }
   };
 
-  const unsaveArticle = (articleId: string) => {
+  const unsaveArticle = async (articleId: string) => {
     if (!user) return;
-
-    const updatedUser = {
-      ...user,
-      savedArticles: user.savedArticles.filter(id => id !== articleId)
-    };
-
-    setUser(updatedUser);
-    localStorage.setItem('newsNexusUser', JSON.stringify(updatedUser));
-
-    // Update in users array
-    const users = JSON.parse(localStorage.getItem('newsNexusUsers') || '[]');
-    const updatedUsers = users.map((u: any) => 
-      u.id === user.id ? { ...u, savedArticles: updatedUser.savedArticles } : u
-    );
-    localStorage.setItem('newsNexusUsers', JSON.stringify(updatedUsers));
+    const token = localStorage.getItem('newsNexusToken');
+    if (!token) return;
+    
+    try {
+      const response = await fetch(`${API_BASE}/user/unsave/${user.id}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ articleId })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setUser(prev => prev ? { ...prev, savedArticles: data.savedArticles } : null);
+      }
+    } catch (error) {
+      console.error('Error unsaving article:', error);
+    }
   };
 
   const isArticleSaved = (articleId: string): boolean => {

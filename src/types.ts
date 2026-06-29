@@ -10,6 +10,9 @@ export interface Article {
   author: string;
   category?: string;
   relevanceScore?: number;
+  insights?: string[];
+  timeline?: Array<{ date: string; event: string }>;
+  sentiment?: 'positive' | 'neutral' | 'negative';
 }
 
 export interface UserPreferences {

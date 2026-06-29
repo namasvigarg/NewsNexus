@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Article, UserPreferences, NewsState, RecommendationState } from '../types';
 import { newsAPI } from '../services/api';
+import { useAuth } from './AuthContext';
 
 interface StoreContextType {
   newsState: NewsState;
@@ -22,13 +23,8 @@ interface StoreProviderProps {
 }
 
 export const StoreProvider: React.FC<StoreProviderProps> = ({ children }) => {
-  const [userId] = useState<string>(() => {
-    const stored = localStorage.getItem('newsNexusUserId');
-    if (stored) return stored;
-    const newId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    localStorage.setItem('newsNexusUserId', newId);
-    return newId;
-  });
+  const { user } = useAuth();
+  const userId = user?.id || '';
 
   const [newsState, setNewsState] = useState<NewsState>({
     articles: [],
@@ -51,6 +47,15 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children }) => {
   });
 
   useEffect(() => {
+    if (!userId) {
+      setUserPreferences({
+        categories: [],
+        interests: [],
+        sources: [],
+        readArticles: []
+      });
+      return;
+    }
     const loadPreferences = async () => {
       try {
         const prefs = await newsAPI.getUserPreferences(userId);
@@ -122,23 +127,45 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children }) => {
   const fetchRecommendations = async () => {
     setRecommendationState(prev => ({ ...prev, loading: true, error: null }));
     try {
-      // First fetch latest news
-      const newsData = await newsAPI.fetchNews(1, 50);
-      
-      // If user has no preferences, show all news
+      // If user has no preferences, show message
       if (userPreferences.categories.length === 0) {
         setRecommendationState({
-          recommendations: newsData.articles.slice(0, 20),
+          recommendations: [],
           loading: false,
           error: null
         });
         return;
       }
       
-      // Get recommendations based on user preferences
-      const data = await newsAPI.getRecommendations(userPreferences);
+      // Fetch news from all selected categories
+      const allRecommendations = [];
+      
+      for (const category of userPreferences.categories) {
+        try {
+          const data = await newsAPI.getNewsByCategory(category, 1, 50);
+          allRecommendations.push(...data.articles);
+        } catch (error) {
+          console.error(`Error fetching ${category}:`, error);
+        }
+      }
+      
+      // Remove duplicates based on article ID
+      const uniqueArticles = Array.from(
+        new Map(allRecommendations.map(article => [article.id, article])).values()
+      );
+      
+      // Score and sort articles
+      const scoredArticles = uniqueArticles.map(article => ({
+        ...article,
+        relevanceScore: calculateRelevanceScore(article, userPreferences)
+      }));
+      
+      // Sort by relevance (return all articles, not limited to 20)
+      const sorted = scoredArticles
+        .sort((a, b) => b.relevanceScore - a.relevanceScore);
+      
       setRecommendationState({
-        recommendations: data.recommendations,
+        recommendations: sorted,
         loading: false,
         error: null
       });
@@ -150,6 +177,25 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children }) => {
         error: 'Failed to fetch recommendations'
       }));
     }
+  };
+
+  const calculateRelevanceScore = (article: Article, prefs: UserPreferences): number => {
+    let score = 0;
+    const text = `${article.title} ${article.description}`.toLowerCase();
+    
+    if (prefs.categories.includes(article.category || '')) {
+      score += 5;
+    }
+    
+    if (prefs.interests && prefs.interests.length > 0) {
+      prefs.interests.forEach(interest => {
+        if (text.includes(interest.toLowerCase())) {
+          score += 2;
+        }
+      });
+    }
+    
+    return score;
   };
 
   const updateUserPreferences = async (prefs: Partial<UserPreferences>) => {
@@ -168,6 +214,29 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children }) => {
         ...prev,
         readArticles: [...prev.readArticles, articleId]
       }));
+
+      // Log read event dynamically for dashboard analytics
+      const article = newsState.articles.find(a => a.id === articleId) || 
+                      recommendationState.recommendations.find(a => a.id === articleId);
+                      
+      const logsKey = `newsNexusReadLogs_${userId}`;
+      const existingLogs = JSON.parse(localStorage.getItem(logsKey) || '[]');
+      
+      if (!existingLogs.some((l: any) => l.articleId === articleId)) {
+        const text = article ? `${article.title} ${article.description || ''} ${article.content || ''}` : '';
+        const wordsCount = text.split(/\s+/).filter(Boolean).length;
+        const readingTimeMin = Math.max(1, Math.round(wordsCount / 200)) || 2; // standard reading speed
+        
+        const logEntry = {
+          articleId,
+          timestamp: Date.now(),
+          category: article?.category || 'general',
+          source: article?.source || 'General News',
+          readingTimeMin
+        };
+        existingLogs.push(logEntry);
+        localStorage.setItem(logsKey, JSON.stringify(existingLogs));
+      }
     } catch (error) {
       console.error('Error marking article as read:', error);
     }

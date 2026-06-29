@@ -1,5 +1,5 @@
 import express from 'express';
-import { fetchNews, searchNews, getNewsByCategory } from '../services/newsService.js';
+import { fetchNews, searchNews, getNewsByCategory, askGeminiAboutArticle } from '../services/newsService.js';
 
 const router = express.Router();
 
@@ -35,6 +35,20 @@ router.get('/category/:category', async (req, res) => {
     const { page = 1, limit = 20 } = req.query;
     const news = await getNewsByCategory(category, page, limit);
     res.json(news);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Ask AI about an article
+router.post('/chat', async (req, res) => {
+  try {
+    const { article, message } = req.body;
+    if (!article || !message) {
+      return res.status(400).json({ error: 'Article and message are required' });
+    }
+    const reply = await askGeminiAboutArticle(article, message);
+    res.json({ reply });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

@@ -4,10 +4,24 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent';
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
 // Calculate similarity between user interests and article
 const calculateRelevanceScore = (article, userPreferences) => {
+  // If user has categories selected, ONLY show articles from those categories
+  if (userPreferences.categories && userPreferences.categories.length > 0) {
+    // Check if article matches ANY selected category
+    const categoryMatch = userPreferences.categories.some(cat => {
+      const articleText = `${article.title} ${article.description}`.toLowerCase();
+      return articleText.includes(cat.toLowerCase()) || article.category === cat;
+    });
+    
+    // If article is NOT from selected categories, give it a score of -1 to filter it out
+    if (!categoryMatch && article.category && !userPreferences.categories.includes(article.category)) {
+      return -1;
+    }
+  }
+  
   let score = 0;
   const articleText = `${article.title} ${article.description}`.toLowerCase();
   
@@ -40,18 +54,26 @@ const calculateRelevanceScore = (article, userPreferences) => {
 // Get personalized recommendations
 export const getRecommendations = async (articles, userPreferences) => {
   try {
+    // If no preferences selected, return empty array
+    if (!userPreferences.categories || userPreferences.categories.length === 0) {
+      return [];
+    }
+    
     // Score all articles
-    const scoredArticles = articles.map(article => ({
-      ...article,
-      relevanceScore: calculateRelevanceScore(article, userPreferences)
-    }));
+    const scoredArticles = articles
+      .map(article => ({
+        ...article,
+        relevanceScore: calculateRelevanceScore(article, userPreferences)
+      }))
+      // Filter out articles that don't match preferences (score = -1)
+      .filter(article => article.relevanceScore !== -1);
     
     // Sort by relevance score and recency
     const recommendations = scoredArticles.sort((a, b) => {
       if (b.relevanceScore !== a.relevanceScore) {
         return b.relevanceScore - a.relevanceScore;
       }
-      return new Date(b.publishedAt) - new Date(a.publishedAt);
+      return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
     });
     
     return recommendations;

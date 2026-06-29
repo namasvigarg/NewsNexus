@@ -13,6 +13,7 @@ export const ArticleCard: React.FC<ArticleCardProps> = ({ article, onClick, show
   const { theme } = useTheme();
   const { isAuthenticated, saveArticle, unsaveArticle, isArticleSaved } = useAuth();
   const [showCopied, setShowCopied] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
   const isDark = theme === 'dark';
   const isSaved = isArticleSaved(article.id);
 
@@ -36,13 +37,12 @@ export const ArticleCard: React.FC<ArticleCardProps> = ({ article, onClick, show
     if (diffHours < 1) return 'Just now';
     if (diffHours < 24) return `${diffHours}h ago`;
     if (diffHours < 48) return 'Yesterday';
-    return date.toLocaleDateString();
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
   };
 
   const handleBookmark = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!isAuthenticated) {
-      alert('Please login to save articles');
       return;
     }
     if (isSaved) {
@@ -62,38 +62,29 @@ export const ArticleCard: React.FC<ArticleCardProps> = ({ article, onClick, show
   return (
     <article
       onClick={onClick}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
       style={{
-        backgroundColor: isDark ? '#1e293b' : 'white',
-        borderRadius: '12px',
+        backgroundColor: 'var(--bg-secondary)',
+        borderRadius: '16px',
         overflow: 'hidden',
-        boxShadow: isDark 
-          ? '0 2px 8px rgba(0,0,0,0.4)' 
-          : '0 2px 8px rgba(0,0,0,0.1)',
+        boxShadow: isHovered ? 'var(--shadow-lg)' : 'var(--shadow-md)',
         cursor: 'pointer',
-        transition: 'all 0.3s',
+        transform: isHovered ? 'translateY(-8px)' : 'translateY(0)',
+        border: isHovered ? '1px solid var(--border-glow-hover)' : '1px solid var(--border-color)',
         display: 'flex',
         flexDirection: 'column',
-        height: '100%'
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.transform = 'translateY(-4px)';
-        e.currentTarget.style.boxShadow = isDark 
-          ? '0 4px 12px rgba(0,0,0,0.6)' 
-          : '0 4px 12px rgba(0,0,0,0.15)';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.transform = 'translateY(0)';
-        e.currentTarget.style.boxShadow = isDark 
-          ? '0 2px 8px rgba(0,0,0,0.4)' 
-          : '0 2px 8px rgba(0,0,0,0.1)';
+        height: '100%',
+        transition: 'all 0.4s cubic-bezier(0.16, 1, 0.3, 1)'
       }}
     >
       {article.urlToImage && (
         <div style={{
           width: '100%',
-          height: '200px',
+          height: '220px',
           overflow: 'hidden',
-          backgroundColor: isDark ? '#0f172a' : '#f5f5f5'
+          backgroundColor: isDark ? '#0f172a' : '#f5f5f5',
+          position: 'relative'
         }}>
           <img
             src={article.urlToImage}
@@ -101,7 +92,9 @@ export const ArticleCard: React.FC<ArticleCardProps> = ({ article, onClick, show
             style={{
               width: '100%',
               height: '100%',
-              objectFit: 'cover'
+              objectFit: 'cover',
+              transform: isHovered ? 'scale(1.06)' : 'scale(1)',
+              transition: 'transform 0.6s cubic-bezier(0.16, 1, 0.3, 1)'
             }}
             onError={(e) => {
               e.currentTarget.style.display = 'none';
@@ -110,13 +103,14 @@ export const ArticleCard: React.FC<ArticleCardProps> = ({ article, onClick, show
         </div>
       )}
 
-      <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', flex: 1 }}>
-        <div style={{ marginBottom: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', flex: 1 }}>
+        <div style={{ marginBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{
-            fontSize: '12px',
-            fontWeight: '600',
-            color: isDark ? '#60a5fa' : '#1976d2',
-            textTransform: 'uppercase'
+            fontSize: '11px',
+            fontWeight: '800',
+            color: 'var(--accent-purple)',
+            textTransform: 'uppercase',
+            letterSpacing: '1px'
           }}>
             {article.source}
           </span>
@@ -124,11 +118,12 @@ export const ArticleCard: React.FC<ArticleCardProps> = ({ article, onClick, show
             {showRelevanceScore && article.relevanceScore !== undefined && (
               <span style={{
                 fontSize: '11px',
-                padding: '4px 8px',
-                backgroundColor: isDark ? '#1e40af' : '#e3f2fd',
-                color: isDark ? '#93c5fd' : '#1976d2',
-                borderRadius: '12px',
-                fontWeight: '600'
+                padding: '4px 10px',
+                background: 'var(--gradient-accent)',
+                color: 'white',
+                borderRadius: '9999px',
+                fontWeight: '700',
+                boxShadow: '0 4px 10px rgba(124, 58, 237, 0.2)'
               }}>
                 {article.relevanceScore > 0 ? `Match: ${article.relevanceScore}` : 'New'}
               </span>
@@ -137,15 +132,26 @@ export const ArticleCard: React.FC<ArticleCardProps> = ({ article, onClick, show
               onClick={handleBookmark}
               title={isSaved ? 'Remove from saved' : 'Save article'}
               style={{
-                background: 'none',
-                border: 'none',
+                background: 'var(--glass-bg)',
+                border: '1px solid var(--border-color)',
+                borderRadius: '50%',
+                width: '32px',
+                height: '32px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
                 cursor: 'pointer',
-                fontSize: '18px',
-                padding: '4px',
-                transition: 'transform 0.2s'
+                fontSize: '14px',
+                transition: 'all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275)'
               }}
-              onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.2)'}
-              onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'scale(1.15)';
+                e.currentTarget.style.borderColor = 'var(--accent-purple)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'scale(1)';
+                e.currentTarget.style.borderColor = 'var(--border-color)';
+              }}
             >
               {isSaved ? '🔖' : '📑'}
             </button>
@@ -153,16 +159,26 @@ export const ArticleCard: React.FC<ArticleCardProps> = ({ article, onClick, show
               onClick={handleShare}
               title="Copy article link"
               style={{
-                background: 'none',
-                border: 'none',
+                background: 'var(--glass-bg)',
+                border: '1px solid var(--border-color)',
+                borderRadius: '50%',
+                width: '32px',
+                height: '32px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
                 cursor: 'pointer',
-                fontSize: '18px',
-                padding: '4px',
-                position: 'relative',
-                transition: 'transform 0.2s'
+                fontSize: '14px',
+                transition: 'all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275)'
               }}
-              onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.2)'}
-              onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'scale(1.15)';
+                e.currentTarget.style.borderColor = 'var(--accent-purple)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'scale(1)';
+                e.currentTarget.style.borderColor = 'var(--border-color)';
+              }}
             >
               {showCopied ? '✅' : '🔗'}
             </button>
@@ -172,22 +188,23 @@ export const ArticleCard: React.FC<ArticleCardProps> = ({ article, onClick, show
         <h3 style={{
           margin: '0 0 12px 0',
           fontSize: '18px',
-          fontWeight: '600',
+          fontWeight: '700',
           lineHeight: '1.4',
-          color: isDark ? '#f1f5f9' : '#212121',
+          fontFamily: 'var(--font-heading)',
+          color: 'var(--text-primary)',
           display: '-webkit-box',
           WebkitLineClamp: 3,
           WebkitBoxOrient: 'vertical',
-          overflow: 'hidden'
+          overflow: 'hidden',
+          transition: 'color 0.3s'
         }}>
           {article.title}
         </h3>
-
         {article.description && (
           <p style={{
-            margin: '0 0 16px 0',
+            margin: '0 0 18px 0',
             fontSize: '14px',
-            color: isDark ? '#94a3b8' : '#666',
+            color: 'var(--text-secondary)',
             lineHeight: '1.6',
             display: '-webkit-box',
             WebkitLineClamp: 3,
@@ -199,20 +216,29 @@ export const ArticleCard: React.FC<ArticleCardProps> = ({ article, onClick, show
           </p>
         )}
 
+
         <div style={{
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
           marginTop: 'auto',
-          paddingTop: '12px',
-          borderTop: `1px solid ${isDark ? '#334155' : '#f0f0f0'}`
+          paddingTop: '14px',
+          borderTop: '1px solid var(--border-color)'
         }}>
-          <span style={{ fontSize: '12px', color: isDark ? '#64748b' : '#999' }}>
-            {formatDate(article.publishedAt)}
+          <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: '500' }}>
+            📅 {formatDate(article.publishedAt)}
           </span>
           {article.author && (
-            <span style={{ fontSize: '12px', color: isDark ? '#64748b' : '#999' }}>
-              By {article.author}
+            <span style={{ 
+              fontSize: '12px', 
+              color: 'var(--text-secondary)', 
+              fontWeight: '600',
+              maxWidth: '120px',
+              textOverflow: 'ellipsis',
+              overflow: 'hidden',
+              whiteSpace: 'nowrap'
+            }}>
+              👤 {article.author}
             </span>
           )}
         </div>

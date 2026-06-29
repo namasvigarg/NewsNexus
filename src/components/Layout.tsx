@@ -85,7 +85,7 @@ export const Layout: React.FC = () => {
       display: 'flex', 
       flexDirection: 'column', 
       height: '100vh', 
-      backgroundColor: isDark ? '#0f0f23' : '#f5f5f5',
+      backgroundColor: 'var(--bg-primary)',
       transition: 'background-color 0.3s'
     }}>
       <Header onSearch={handleSearch} />
@@ -97,7 +97,7 @@ export const Layout: React.FC = () => {
           onCategoryClick={handleCategoryClick}
         />
         <main style={{ flex: 1, overflow: 'auto', padding: '20px' }}>
-          {currentView === 'news' && <NewsFeed onArticleClick={handleArticleClick} />}
+          {currentView === 'news' && <NewsFeed onArticleClick={handleArticleClick} currentCategory={currentCategory} />}
           {currentView === 'recommendations' && <RecommendationFeed onArticleClick={handleArticleClick} />}
           {currentView === 'saved' && <SavedArticles onArticleClick={handleArticleClick} />}
           {currentView === 'dashboard' && <Dashboard onArticleClick={handleArticleClick} />}
