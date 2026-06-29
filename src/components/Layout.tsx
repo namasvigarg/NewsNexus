@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useStore } from '../context/StoreContext';
 import { useTheme } from '../context/ThemeContext';
 import { Header } from './Header';
@@ -20,6 +20,13 @@ export const Layout: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const { fetchNews, searchNews, fetchRecommendations, fetchNewsByCategory } = useStore();
   const { theme } = useTheme();
+  const mainRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (mainRef.current) {
+      mainRef.current.scrollTop = 0;
+    }
+  }, [currentView, selectedArticle]);
 
   useEffect(() => {
     fetchNews();
@@ -65,17 +72,6 @@ export const Layout: React.FC = () => {
   const handleBackToFeed = () => {
     setSelectedArticle(null);
     setCurrentView(previousView);
-    
-    // Restore previous state
-    if (searchQuery.trim()) {
-      searchNews(searchQuery);
-    } else if (currentCategory) {
-      fetchNewsByCategory(currentCategory);
-    } else if (previousView === 'recommendations') {
-      fetchRecommendations();
-    } else if (previousView === 'news') {
-      fetchNews();
-    }
   };
 
   const isDark = theme === 'dark';
@@ -96,7 +92,7 @@ export const Layout: React.FC = () => {
           onViewChange={handleViewChange}
           onCategoryClick={handleCategoryClick}
         />
-        <main style={{ flex: 1, overflow: 'auto', padding: '20px' }}>
+        <main ref={mainRef} style={{ flex: 1, overflow: 'auto', padding: '20px' }}>
           {currentView === 'news' && <NewsFeed onArticleClick={handleArticleClick} currentCategory={currentCategory} />}
           {currentView === 'recommendations' && <RecommendationFeed onArticleClick={handleArticleClick} />}
           {currentView === 'saved' && <SavedArticles onArticleClick={handleArticleClick} />}
