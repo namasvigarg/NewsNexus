@@ -3,9 +3,30 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const NEWS_API_KEY = process.env.NEWS_API_KEY;
-const NEWS_API_BASE = 'https://newsapi.org/v2';
+const GNEWS_API_KEY = process.env.GNEWS_API_KEY;
+const GNEWS_API_BASE = 'https://gnews.io/api/v4';
 const CATEGORIES = ['business', 'entertainment', 'health', 'science', 'sports', 'technology'];
+
+// Simple memory cache to conserve GNews API requests (100 request/day limit)
+const articleCache = new Map();
+const CACHE_TTL = 2 * 60 * 60 * 1000; // 2 hours cache
+
+const getCachedArticles = (key) => {
+  const cached = articleCache.get(key);
+  if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
+    return cached.articles;
+  }
+  return null;
+};
+
+const setCachedArticles = (key, articles) => {
+  articleCache.set(key, {
+    timestamp: Date.now(),
+    articles
+  });
+};
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
@@ -306,60 +327,91 @@ Return ONLY the raw JSON object, no markdown.`;
   });
 };
 
+// Helper to fetch multiple pages sequentially from GNews
+const fetchGNewsPages = async (endpoint, params, maxPages = 4) => {
+  const articles = [];
+  let totalArticles = 0;
+  
+  for (let page = 1; page <= maxPages; page++) {
+    try {
+      const response = await axios.get(`${GNEWS_API_BASE}/${endpoint}`, {
+        params: { ...params, max: 10, page }
+      });
+      
+      const pageArticles = response.data.articles || [];
+      articles.push(...pageArticles);
+      totalArticles = response.data.totalArticles || articles.length;
+      
+      // If we got fewer than 10 articles, we reached the end of the available news
+      if (pageArticles.length < 10) {
+        break;
+      }
+      
+      // Delay before the next page request to respect GNews free-tier rate limit (1 req/sec)
+      if (page < maxPages) {
+        await sleep(1100);
+      }
+    } catch (error) {
+      console.error(`Error fetching page ${page} from GNews:`, error.message);
+      // If page 1 fails, propagate error. If subsequent pages fail, return what we have so far.
+      if (page === 1) {
+        throw error;
+      }
+      break;
+    }
+  }
+  
+  return {
+    articles,
+    totalArticles
+  };
+};
+
 // Fetch latest news from all categories
 export const fetchNews = async (page = 1, limit = 50) => {
   try {
-    // Fetch articles from all categories
-    const allArticles = [];
+    const cacheKey = `all_news_page_${page}_limit_${limit}`;
+    const cached = getCachedArticles(cacheKey);
+    if (cached) {
+      return {
+        articles: cached,
+        totalResults: cached.length
+      };
+    }
+
+    // Fetch up to 6 pages (up to 60 articles) and slice to 51
+    const { articles, totalArticles } = await fetchGNewsPages('top-headlines', {
+      token: GNEWS_API_KEY,
+      country: 'in',
+      lang: 'en'
+    }, 6);
     
-    for (const category of CATEGORIES) {
-      try {
-        const response = await axios.get(`${NEWS_API_BASE}/top-headlines`, {
-          params: {
-            apiKey: NEWS_API_KEY,
-            category: category,
-            country: 'us',
-            pageSize: Math.ceil(limit / CATEGORIES.length),
-            page: 1
-          }
-        });
-        
-        const articles = response.data.articles.map(article => ({
-          id: article.url,
-          title: article.title,
-          description: article.description,
-          content: article.content,
-          url: article.url,
-          urlToImage: article.urlToImage,
-          publishedAt: article.publishedAt,
-          source: article.source.name,
-          author: article.author,
-          category: category
-        }));
-        
-        allArticles.push(...articles);
-      } catch (error) {
-        console.error(`Error fetching ${category}:`, error.message);
-      }
+    const mapped = articles.slice(0, 51).map(article => ({
+      id: article.url,
+      title: article.title,
+      description: article.description,
+      content: article.content,
+      url: article.url,
+      urlToImage: article.image,
+      publishedAt: article.publishedAt,
+      source: article.source.name,
+      author: null,
+      category: 'general'
+    }));
+    
+    if (mapped.length === 0) {
+      throw new Error('GNews returned empty results');
     }
     
-    if (allArticles.length === 0) {
-      throw new Error('NewsAPI returned empty results');
-    }
-    
-    // Sort by date and limit
-    const sortedArticles = allArticles
-      .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
-      .slice(0, limit);
-    
-    const articlesWithInsights = await generateInsights(sortedArticles);
+    const articlesWithInsights = await generateInsights(mapped);
+    setCachedArticles(cacheKey, articlesWithInsights);
     
     return {
       articles: articlesWithInsights,
-      totalResults: articlesWithInsights.length
+      totalResults: Math.min(totalArticles, 51)
     };
   } catch (error) {
-    console.warn('NewsAPI rate limited or failed, returning mock news fallback:', error.message);
+    console.warn('GNews API fetchNews failed, returning mock news fallback:', error.message);
     const mockFeed = [];
     Object.keys(MOCK_ARTICLES).forEach(cat => {
       mockFeed.push(...MOCK_ARTICLES[cat]);
@@ -380,26 +432,33 @@ export const fetchNews = async (page = 1, limit = 50) => {
 // Search news
 export const searchNews = async (query, page = 1, limit = 20) => {
   try {
-    const response = await axios.get(`${NEWS_API_BASE}/everything`, {
-      params: {
-        apiKey: NEWS_API_KEY,
-        q: query,
-        pageSize: limit,
-        page: page,
-        sortBy: 'relevancy'
-      }
-    });
+    const cacheKey = `search_${query}_page_${page}_limit_${limit}`;
+    const cached = getCachedArticles(cacheKey);
+    if (cached) {
+      return {
+        articles: cached,
+        totalResults: cached.length
+      };
+    }
+
+    // Fetch up to 4 pages (up to 40 articles) and slice to 36
+    const { articles, totalArticles } = await fetchGNewsPages('search', {
+      token: GNEWS_API_KEY,
+      q: query,
+      country: 'in',
+      lang: 'en'
+    }, 4);
     
-    const mapped = response.data.articles.map(article => ({
+    const mapped = articles.slice(0, 36).map(article => ({
       id: article.url,
       title: article.title,
       description: article.description,
       content: article.content,
       url: article.url,
-      urlToImage: article.urlToImage,
+      urlToImage: article.image,
       publishedAt: article.publishedAt,
       source: article.source.name,
-      author: article.author
+      author: null
     }));
     
     if (mapped.length === 0) {
@@ -407,13 +466,14 @@ export const searchNews = async (query, page = 1, limit = 20) => {
     }
     
     const articlesWithInsights = await generateInsights(mapped);
+    setCachedArticles(cacheKey, articlesWithInsights);
     
     return {
       articles: articlesWithInsights,
-      totalResults: response.data.totalResults
+      totalResults: Math.min(totalArticles, 36)
     };
   } catch (error) {
-    console.warn(`NewsAPI search failed, returning mock search fallback:`, error.message);
+    console.warn(`GNews API search failed, returning mock search fallback:`, error.message);
     const mockFeed = [];
     Object.keys(MOCK_ARTICLES).forEach(cat => {
       mockFeed.push(...MOCK_ARTICLES[cat]);
@@ -435,26 +495,33 @@ export const searchNews = async (query, page = 1, limit = 20) => {
 // Get news by category
 export const getNewsByCategory = async (category, page = 1, limit = 50) => {
   try {
-    const response = await axios.get(`${NEWS_API_BASE}/top-headlines`, {
-      params: {
-        apiKey: NEWS_API_KEY,
-        category: category,
-        country: 'us',
-        pageSize: limit,
-        page: page
-      }
-    });
+    const cacheKey = `category_${category}_page_${page}_limit_${limit}`;
+    const cached = getCachedArticles(cacheKey);
+    if (cached) {
+      return {
+        articles: cached,
+        totalResults: cached.length
+      };
+    }
+
+    // Fetch up to 4 pages (up to 40 articles) and slice to 36
+    const { articles, totalArticles } = await fetchGNewsPages('top-headlines', {
+      token: GNEWS_API_KEY,
+      category: category,
+      country: 'in',
+      lang: 'en'
+    }, 4);
     
-    const mapped = response.data.articles.map(article => ({
+    const mapped = articles.slice(0, 36).map(article => ({
       id: article.url,
       title: article.title,
       description: article.description,
       content: article.content,
       url: article.url,
-      urlToImage: article.urlToImage,
+      urlToImage: article.image,
       publishedAt: article.publishedAt,
       source: article.source.name,
-      author: article.author,
+      author: null,
       category: category
     }));
     
@@ -463,13 +530,14 @@ export const getNewsByCategory = async (category, page = 1, limit = 50) => {
     }
     
     const articlesWithInsights = await generateInsights(mapped);
+    setCachedArticles(cacheKey, articlesWithInsights);
     
     return {
       articles: articlesWithInsights,
-      totalResults: response.data.totalResults
+      totalResults: Math.min(totalArticles, 36)
     };
   } catch (error) {
-    console.warn(`NewsAPI category ${category} failed, returning mock category fallback:`, error.message);
+    console.warn(`GNews API category ${category} failed, returning mock category fallback:`, error.message);
     const mockCat = MOCK_ARTICLES[category] || MOCK_ARTICLES['technology'];
     const articlesWithInsights = await generateInsights(mockCat);
     return {
