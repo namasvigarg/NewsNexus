@@ -93,5 +93,15 @@ export const newsAPI = {
     });
     if (!response.ok) throw new Error('Failed to get response from AI assistant');
     return response.json();
+  },
+
+  async getArticleInsights(article: Article) {
+    const response = await fetch(`${API_BASE}/news/insights`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ article })
+    });
+    if (!response.ok) throw new Error('Failed to fetch article insights');
+    return response.json();
   }
 };

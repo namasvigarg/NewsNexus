@@ -5,6 +5,12 @@ dotenv.config();
 
 const GNEWS_API_KEY = process.env.GNEWS_API_KEY;
 const GNEWS_API_BASE = 'https://gnews.io/api/v4';
+
+const NEWS_API_KEY = process.env.NEWS_API_KEY;
+const NEWS_API_BASE = 'https://newsapi.org/v2';
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+
 const CATEGORIES = ['business', 'entertainment', 'health', 'science', 'sports', 'technology'];
 
 // Simple memory cache to conserve GNews API requests (100 request/day limit)
@@ -165,7 +171,7 @@ const calculateFallbackSentiment = (article) => {
 };
 
 // Advanced dynamic local fallback summarizer
-const generateFallbackInsights = (article) => {
+const generateFallbackInsights = (article, fullContent = '') => {
   const insights = [];
   
   // Clean description and content of raw HTML tags and character indicators
@@ -180,23 +186,107 @@ const generateFallbackInsights = (article) => {
 
   const cleanDesc = cleanHTML(article.description);
   const cleanCont = cleanHTML(article.content);
+  const cleanFull = cleanHTML(fullContent);
 
-  const fullText = `${cleanDesc}. ${cleanCont}`;
-  const rawSentences = fullText
-    .split(/[.!?]+/)
-    .map(s => s.trim())
-    .filter(s => s.length > 25 && s.length < 130);
+  // If fullContent is provided and of meaningful length, prioritize it to utilize the entire article
+  const textToSummarize = cleanFull.length > 200 ? cleanFull : `${cleanDesc}. ${cleanCont}`;
   
-  // Deduplicate and filter out near-identical sentences
-  rawSentences.forEach(s => {
+  // Split using lookbehind to retain sentence-ending punctuation (.!?)
+  const parts = textToSummarize.split(/(?<=[.!?])/);
+  // Remove the last chunk if the source text was truncated (didn't end with sentence-ending punctuation)
+  const trimmedText = textToSummarize.trim();
+  const endsWithPunctuation = /[.!?]['"]?$/.test(trimmedText);
+  if (!endsWithPunctuation && parts.length > 0) {
+    parts.pop();
+  }
+
+  const rawSentences = parts
+    .map(s => {
+      let cleaned = s.trim();
+      // Remove any leading non-alphabetic/numeric characters (like commas, dashes, quotes)
+      cleaned = cleaned.replace(/^[^a-zA-Z0-9'"]+/, '').trim();
+      return cleaned;
+    })
+    // Filter out sentences that are too short, too long, or contain boilerplate noise
+    .filter(s => {
+      if (s.length <= 40 || s.length >= 150) return false;
+      const lower = s.toLowerCase();
+      
+      // Filter out questions
+      if (s.endsWith('?') || lower.includes('?')) return false;
+
+      // Filter out first person references to keep insights objective
+      if (
+        lower.startsWith('i ') || 
+        lower.startsWith('we ') || 
+        lower.startsWith('my ') || 
+        lower.startsWith('our ') ||
+        /\b(i|we|my|our|us|me)\b/.test(lower)
+      ) return false;
+
+      // Filter out boilerplate, social media, cookie, author credits, and metadata lines
+      if (
+        lower.includes('cookie') || 
+        lower.includes('subscribe') || 
+        lower.includes('sign in') || 
+        lower.includes('log in') || 
+        lower.includes('privacy policy') || 
+        lower.includes('all rights reserved') ||
+        lower.includes('terms of service') ||
+        lower.includes('share this') ||
+        lower.includes('follow us') ||
+        lower.includes('journalists') ||
+        lower.includes('our dedicated team') ||
+        lower.includes('browsing experience') ||
+        lower.includes('feedback') ||
+        lower.includes('newsletter') ||
+        lower.includes('published') ||
+        lower.includes('written by') ||
+        lower.includes('translated by') ||
+        lower.includes('photo by') ||
+        lower.includes('copyright') ||
+        lower.includes('click here') ||
+        lower.includes('read more') ||
+        lower.includes('&#x') || // HTML entities
+        lower.includes('&amp;') ||
+        lower.includes(';')
+      ) return false;
+      
+      return true;
+    });
+  
+  // Score the remaining sentences to find the most informative factual key insights
+  const scoredSentences = rawSentences.map(s => {
+    let score = 0;
+    // Length sweet spot (60 - 120 chars)
+    if (s.length >= 60 && s.length <= 120) score += 5;
+    
+    // Contains numbers (statistics, dates, data points)
+    if (/\d+/.test(s)) score += 8;
+    
+    // Contains uppercase proper nouns (entities, locations, names)
+    const upperWords = s.split(' ').filter(w => w[0] && w[0] === w[0].toUpperCase() && !/^[A-Z\d\W]+$/.test(w));
+    score += upperWords.length * 2;
+    
+    return { sentence: s, score };
+  });
+
+  // Sort by score descending to get best sentences first
+  scoredSentences.sort((a, b) => b.score - a.score);
+
+  // Deduplicate and select top 5
+  scoredSentences.forEach(item => {
+    const s = item.sentence;
     const normalized = s.toLowerCase().replace(/[^a-z0-9]/g, '');
     const isDuplicate = insights.some(existing => {
       const existingNormalized = existing.toLowerCase().replace(/[^a-z0-9]/g, '');
       return existingNormalized.includes(normalized) || normalized.includes(existingNormalized);
     });
     
-    if (insights.length < 5 && !isDuplicate && normalized.length > 15) {
-      insights.push(s);
+    if (insights.length < 5 && !isDuplicate) {
+      // Ensure the sentence ends with a period if it doesn't end with punctuation
+      const formatted = /[.!?]$/.test(s) ? s : `${s}.`;
+      insights.push(formatted);
     }
   });
   
@@ -263,10 +353,11 @@ const generateInsights = async (articles) => {
   });
   
   if (missingArticles.length > 0) {
+    let prompt = '';
     try {
-      const prompt = `For each of the following news articles, provide:
-1. Exactly 5 short, key insight bullet points (max 12 words per bullet point).
-2. A chronological timeline of exactly 4 key steps/events leading up to this news article (each step should have a 'date' like a month name 'March' or 'Today' and a short 'event' summary of max 8 words).
+      prompt = `For each of the following news articles, provide:
+1. Exactly 5 high-quality key insight bullet points (each bullet point must be a complete, informative sentence of 12 to 20 words).
+2. A chronological timeline of exactly 4 key steps/events leading up to this news article (each step should have a 'date' like a month name 'March' or 'Today' and a short 'event' summary of max 12 words).
 3. A general sentiment classification: classify the article sentiment as exactly "positive", "neutral", or "negative" based on reading comprehension of the topic context.
 
 Return a JSON object where the keys are the article indices (as strings, e.g., "0", "1") and the values are objects with "insights" (array of strings), "timeline" (array of objects with "date" and "event" keys), and "sentiment" (string, one of "positive", "neutral", "negative").
@@ -282,7 +373,8 @@ Return ONLY the raw JSON object, no markdown.`;
           contents: [{
             parts: [{ text: prompt }]
           }]
-        }
+        },
+        { timeout: 15000 }
       );
       
       const text = response.data.candidates[0].content.parts[0].text;
@@ -297,16 +389,55 @@ Return ONLY the raw JSON object, no markdown.`;
         const sentiment = entry.sentiment || calculateFallbackSentiment(article);
         insightsCache.set(article.url, { insights, timeline, sentiment });
       });
-    } catch (error) {
-      console.error('Error generating insights and timelines in batch:', error.message);
-      // Fallback for missing articles on error
-      missingArticles.forEach(article => {
-        insightsCache.set(article.url, {
-          insights: generateFallbackInsights(article),
-          timeline: generateFallbackTimeline(article),
-          sentiment: calculateFallbackSentiment(article)
+    } catch (geminiError) {
+      console.warn('Gemini batch API failed, trying Groq:', geminiError.message);
+      let success = false;
+      if (GROQ_API_KEY) {
+        try {
+          const response = await axios.post(
+            GROQ_API_URL,
+            {
+              model: 'llama-3.3-70b-versatile',
+              messages: [{ role: 'user', content: prompt }],
+              temperature: 0.1,
+              response_format: { type: 'json_object' }
+            },
+            {
+              headers: {
+                'Authorization': `Bearer ${GROQ_API_KEY}`,
+                'Content-Type': 'application/json'
+              },
+              timeout: 15000
+            }
+          );
+          const text = response.data.choices[0].message.content;
+          const jsonMatch = text.match(/\{.*\}/s);
+          if (jsonMatch) {
+            const resultMap = JSON.parse(jsonMatch[0]);
+            missingArticles.forEach((article, i) => {
+              const entry = resultMap[String(i)] || {};
+              const insights = entry.insights || generateFallbackInsights(article);
+              const timeline = entry.timeline || generateFallbackTimeline(article);
+              const sentiment = entry.sentiment || calculateFallbackSentiment(article);
+              insightsCache.set(article.url, { insights, timeline, sentiment });
+            });
+            success = true;
+          }
+        } catch (groqError) {
+          console.error('Groq batch fallback failed too:', groqError.message);
+        }
+      }
+      
+      if (!success) {
+        // Fallback for missing articles on total error
+        missingArticles.forEach(article => {
+          insightsCache.set(article.url, {
+            insights: generateFallbackInsights(article),
+            timeline: generateFallbackTimeline(article),
+            sentiment: calculateFallbackSentiment(article)
+          });
         });
-      });
+      }
     }
   }
   
@@ -335,7 +466,8 @@ const fetchGNewsPages = async (endpoint, params, maxPages = 4) => {
   for (let page = 1; page <= maxPages; page++) {
     try {
       const response = await axios.get(`${GNEWS_API_BASE}/${endpoint}`, {
-        params: { ...params, max: 10, page }
+        params: { ...params, max: 10, page },
+        timeout: 5000
       });
       
       const pageArticles = response.data.articles || [];
@@ -367,6 +499,86 @@ const fetchGNewsPages = async (endpoint, params, maxPages = 4) => {
   };
 };
 
+// Helper to fetch multiple pages sequentially from NewsAPI
+const fetchNewsAPIPages = async (endpoint, params, maxPages = 4) => {
+  const articles = [];
+  let totalArticles = 0;
+  
+  for (let page = 1; page <= maxPages; page++) {
+    try {
+      const response = await axios.get(`${NEWS_API_BASE}/${endpoint}`, {
+        params: { ...params, apiKey: NEWS_API_KEY, pageSize: 10, page },
+        timeout: 5000
+      });
+      
+      const pageArticles = response.data.articles || [];
+      articles.push(...pageArticles);
+      totalArticles = response.data.totalResults || articles.length;
+      
+      if (pageArticles.length < 10) {
+        break;
+      }
+      
+      if (page < maxPages) {
+        await sleep(500);
+      }
+    } catch (error) {
+      console.error(`Error fetching page ${page} from NewsAPI:`, error.message);
+      if (page === 1) {
+        throw error;
+      }
+      break;
+    }
+  }
+  
+  return {
+    articles,
+    totalArticles
+  };
+};
+
+// Fallback logic when GNews API fails
+const fallbackToNewsAPI = async (type, categoryOrQuery = null, page = 1, limit = 50) => {
+  if (!NEWS_API_KEY) {
+    throw new Error('NewsAPI key is missing in environment variables');
+  }
+
+  console.log(`[Fallback] GNews failed. Trying NewsAPI for type: ${type}...`);
+  let endpoint = 'top-headlines';
+  const params = {
+    country: 'us'
+  };
+
+  if (type === 'search') {
+    endpoint = 'everything';
+    params.q = categoryOrQuery;
+    delete params.country;
+  } else if (type === 'category') {
+    params.category = categoryOrQuery;
+  }
+
+  const maxPages = type === 'search' ? 4 : 6;
+  const { articles, totalArticles } = await fetchNewsAPIPages(endpoint, params, maxPages);
+
+  const mapped = articles.map(article => ({
+    id: article.url,
+    title: article.title,
+    description: article.description || '',
+    content: article.content || '',
+    url: article.url,
+    urlToImage: article.urlToImage || '',
+    publishedAt: article.publishedAt,
+    source: article.source?.name || 'News Source',
+    author: article.author || null,
+    category: type === 'category' ? categoryOrQuery : 'general'
+  }));
+
+  return {
+    mapped,
+    totalArticles
+  };
+};
+
 // Fetch latest news from all categories
 export const fetchNews = async (page = 1, limit = 50) => {
   try {
@@ -379,28 +591,55 @@ export const fetchNews = async (page = 1, limit = 50) => {
       };
     }
 
-    // Fetch up to 6 pages (up to 60 articles) and slice to 51
-    const { articles, totalArticles } = await fetchGNewsPages('top-headlines', {
-      token: GNEWS_API_KEY,
-      country: 'in',
-      lang: 'en'
-    }, 6);
-    
-    const mapped = articles.slice(0, 51).map(article => ({
-      id: article.url,
-      title: article.title,
-      description: article.description,
-      content: article.content,
-      url: article.url,
-      urlToImage: article.image,
-      publishedAt: article.publishedAt,
-      source: article.source.name,
-      author: null,
-      category: 'general'
-    }));
-    
-    if (mapped.length === 0) {
-      throw new Error('GNews returned empty results');
+    let mapped = [];
+    let totalResults = 0;
+
+    try {
+      // Fetch up to 6 pages (up to 60 articles) and slice to 51 from GNews
+      const { articles, totalArticles } = await fetchGNewsPages('top-headlines', {
+        token: GNEWS_API_KEY,
+        country: 'in',
+        lang: 'en'
+      }, 6);
+      
+      mapped = articles.slice(0, 51).map(article => ({
+        id: article.url,
+        title: article.title,
+        description: article.description,
+        content: article.content,
+        url: article.url,
+        urlToImage: article.image,
+        publishedAt: article.publishedAt,
+        source: article.source.name,
+        author: null,
+        category: 'general'
+      }));
+      totalResults = Math.min(totalArticles, 51);
+      
+      if (mapped.length === 0) {
+        throw new Error('GNews returned empty results');
+      }
+    } catch (gnewsError) {
+      console.warn('GNews API fetchNews failed, falling back to NewsAPI:', gnewsError.message);
+      try {
+        const fallbackResult = await fallbackToNewsAPI('feed', null, page, limit);
+        mapped = fallbackResult.mapped.slice(0, 51);
+        totalResults = Math.min(fallbackResult.totalArticles, 51);
+        if (mapped.length === 0) {
+          throw new Error('NewsAPI returned empty results');
+        }
+      } catch (fallbackError) {
+        console.warn('NewsAPI fallback failed, using mock news:', fallbackError.message);
+        const mockFeed = [];
+        Object.keys(MOCK_ARTICLES).forEach(cat => {
+          mockFeed.push(...MOCK_ARTICLES[cat]);
+        });
+        
+        mapped = mockFeed
+          .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
+          .slice(0, limit);
+        totalResults = mapped.length;
+      }
     }
     
     const articlesWithInsights = await generateInsights(mapped);
@@ -408,24 +647,11 @@ export const fetchNews = async (page = 1, limit = 50) => {
     
     return {
       articles: articlesWithInsights,
-      totalResults: Math.min(totalArticles, 51)
+      totalResults
     };
   } catch (error) {
-    console.warn('GNews API fetchNews failed, returning mock news fallback:', error.message);
-    const mockFeed = [];
-    Object.keys(MOCK_ARTICLES).forEach(cat => {
-      mockFeed.push(...MOCK_ARTICLES[cat]);
-    });
-    
-    const sorted = mockFeed
-      .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
-      .slice(0, limit);
-      
-    const articlesWithInsights = await generateInsights(sorted);
-    return {
-      articles: articlesWithInsights,
-      totalResults: articlesWithInsights.length
-    };
+    console.error('Fatal error in fetchNews:', error.message);
+    return { articles: [], totalResults: 0 };
   }
 };
 
@@ -441,28 +667,57 @@ export const searchNews = async (query, page = 1, limit = 20) => {
       };
     }
 
-    // Fetch up to 4 pages (up to 40 articles) and slice to 36
-    const { articles, totalArticles } = await fetchGNewsPages('search', {
-      token: GNEWS_API_KEY,
-      q: query,
-      country: 'in',
-      lang: 'en'
-    }, 4);
-    
-    const mapped = articles.slice(0, 36).map(article => ({
-      id: article.url,
-      title: article.title,
-      description: article.description,
-      content: article.content,
-      url: article.url,
-      urlToImage: article.image,
-      publishedAt: article.publishedAt,
-      source: article.source.name,
-      author: null
-    }));
-    
-    if (mapped.length === 0) {
-      throw new Error('No articles found matching search query');
+    let mapped = [];
+    let totalResults = 0;
+
+    try {
+      // Fetch up to 4 pages (up to 40 articles) and slice to 36 from GNews
+      const { articles, totalArticles } = await fetchGNewsPages('search', {
+        token: GNEWS_API_KEY,
+        q: query,
+        country: 'in',
+        lang: 'en'
+      }, 4);
+      
+      mapped = articles.slice(0, 36).map(article => ({
+        id: article.url,
+        title: article.title,
+        description: article.description,
+        content: article.content,
+        url: article.url,
+        urlToImage: article.image,
+        publishedAt: article.publishedAt,
+        source: article.source.name,
+        author: null
+      }));
+      totalResults = Math.min(totalArticles, 36);
+      
+      if (mapped.length === 0) {
+        throw new Error('No articles found matching search query');
+      }
+    } catch (gnewsError) {
+      console.warn(`GNews API search failed, falling back to NewsAPI:`, gnewsError.message);
+      try {
+        const fallbackResult = await fallbackToNewsAPI('search', query, page, limit);
+        mapped = fallbackResult.mapped.slice(0, 36);
+        totalResults = Math.min(fallbackResult.totalArticles, 36);
+        if (mapped.length === 0) {
+          throw new Error('NewsAPI search returned empty results');
+        }
+      } catch (fallbackError) {
+        console.warn('NewsAPI search fallback failed, using mock search:', fallbackError.message);
+        const mockFeed = [];
+        Object.keys(MOCK_ARTICLES).forEach(cat => {
+          mockFeed.push(...MOCK_ARTICLES[cat]);
+        });
+        const matched = mockFeed.filter(a => 
+          a.title.toLowerCase().includes(query.toLowerCase()) || 
+          a.description.toLowerCase().includes(query.toLowerCase())
+        );
+        
+        mapped = matched.length > 0 ? matched : mockFeed.slice(0, 5);
+        totalResults = mapped.length;
+      }
     }
     
     const articlesWithInsights = await generateInsights(mapped);
@@ -470,25 +725,11 @@ export const searchNews = async (query, page = 1, limit = 20) => {
     
     return {
       articles: articlesWithInsights,
-      totalResults: Math.min(totalArticles, 36)
+      totalResults
     };
   } catch (error) {
-    console.warn(`GNews API search failed, returning mock search fallback:`, error.message);
-    const mockFeed = [];
-    Object.keys(MOCK_ARTICLES).forEach(cat => {
-      mockFeed.push(...MOCK_ARTICLES[cat]);
-    });
-    const matched = mockFeed.filter(a => 
-      a.title.toLowerCase().includes(query.toLowerCase()) || 
-      a.description.toLowerCase().includes(query.toLowerCase())
-    );
-    
-    const finalMatches = matched.length > 0 ? matched : mockFeed.slice(0, 5);
-    const articlesWithInsights = await generateInsights(finalMatches);
-    return {
-      articles: articlesWithInsights,
-      totalResults: articlesWithInsights.length
-    };
+    console.error('Fatal error in searchNews:', error.message);
+    return { articles: [], totalResults: 0 };
   }
 };
 
@@ -504,29 +745,50 @@ export const getNewsByCategory = async (category, page = 1, limit = 50) => {
       };
     }
 
-    // Fetch up to 4 pages (up to 40 articles) and slice to 36
-    const { articles, totalArticles } = await fetchGNewsPages('top-headlines', {
-      token: GNEWS_API_KEY,
-      category: category,
-      country: 'in',
-      lang: 'en'
-    }, 4);
-    
-    const mapped = articles.slice(0, 36).map(article => ({
-      id: article.url,
-      title: article.title,
-      description: article.description,
-      content: article.content,
-      url: article.url,
-      urlToImage: article.image,
-      publishedAt: article.publishedAt,
-      source: article.source.name,
-      author: null,
-      category: category
-    }));
-    
-    if (mapped.length === 0) {
-      throw new Error('Category returned empty results');
+    let mapped = [];
+    let totalResults = 0;
+
+    try {
+      // Fetch up to 4 pages (up to 40 articles) and slice to 36 from GNews
+      const { articles, totalArticles } = await fetchGNewsPages('top-headlines', {
+        token: GNEWS_API_KEY,
+        category: category,
+        country: 'in',
+        lang: 'en'
+      }, 4);
+      
+      mapped = articles.slice(0, 36).map(article => ({
+        id: article.url,
+        title: article.title,
+        description: article.description,
+        content: article.content,
+        url: article.url,
+        urlToImage: article.image,
+        publishedAt: article.publishedAt,
+        source: article.source.name,
+        author: null,
+        category: category
+      }));
+      totalResults = Math.min(totalArticles, 36);
+      
+      if (mapped.length === 0) {
+        throw new Error('Category returned empty results');
+      }
+    } catch (gnewsError) {
+      console.warn(`GNews API category ${category} failed, falling back to NewsAPI:`, gnewsError.message);
+      try {
+        const fallbackResult = await fallbackToNewsAPI('category', category, page, limit);
+        mapped = fallbackResult.mapped.slice(0, 36);
+        totalResults = Math.min(fallbackResult.totalArticles, 36);
+        if (mapped.length === 0) {
+          throw new Error('NewsAPI category returned empty results');
+        }
+      } catch (fallbackError) {
+        console.warn('NewsAPI category fallback failed, using mock category:', fallbackError.message);
+        const mockCat = MOCK_ARTICLES[category] || MOCK_ARTICLES['technology'];
+        mapped = mockCat;
+        totalResults = mapped.length;
+      }
     }
     
     const articlesWithInsights = await generateInsights(mapped);
@@ -534,59 +796,249 @@ export const getNewsByCategory = async (category, page = 1, limit = 50) => {
     
     return {
       articles: articlesWithInsights,
-      totalResults: Math.min(totalArticles, 36)
+      totalResults
     };
   } catch (error) {
-    console.warn(`GNews API category ${category} failed, returning mock category fallback:`, error.message);
-    const mockCat = MOCK_ARTICLES[category] || MOCK_ARTICLES['technology'];
-    const articlesWithInsights = await generateInsights(mockCat);
-    return {
-      articles: articlesWithInsights,
-      totalResults: articlesWithInsights.length
-    };
+    console.error('Fatal error in getNewsByCategory:', error.message);
+    return { articles: [], totalResults: 0 };
   }
 };
 
 // Local context-aware rule-based chat engine when Gemini API key quota is exhausted
-const generateFallbackChatResponse = (article, message) => {
+const generateFallbackChatResponse = (article, message, fullContent = '') => {
   const msg = message.toLowerCase().trim();
   
+  // Clean HTML
+  const cleanHTML = (text) => {
+    if (!text) return '';
+    return text
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/\[\+\d+ chars\]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
+  const titleClean = cleanHTML(article.title.split(' - ')[0]);
+  const descClean = cleanHTML(article.description);
+  const contentClean = cleanHTML(article.content);
+  
+  // Prioritize full content if available and longer than description
+  const cleanFull = cleanHTML(fullContent);
+  const textToAnalyze = cleanFull.length > 200 ? cleanFull : `${descClean}. ${contentClean}`;
+
+  // Split text into sentences and clean them
+  const sentences = textToAnalyze
+    .split(/[.!?]+/)
+    .map(s => {
+      let cleaned = s.trim();
+      // Remove any leading non-alphabetic/numeric characters (like commas, dashes, quotes)
+      cleaned = cleaned.replace(/^[^a-zA-Z0-9'"]+/, '').trim();
+      return cleaned;
+    })
+    .filter(s => s.length > 25 && s.length < 200);
+
+  // Helper to find sentences matching keywords
+  const findMatchingSentences = (keywords, limit = 2) => {
+    const matches = [];
+    sentences.forEach(s => {
+      const lowerS = s.toLowerCase();
+      let matchCount = 0;
+      keywords.forEach(kw => {
+        if (lowerS.includes(kw)) matchCount++;
+      });
+      if (matchCount > 0) {
+        matches.push({ sentence: s, count: matchCount });
+      }
+    });
+    // Sort matches by number of matching keywords descending
+    matches.sort((a, b) => b.count - a.count);
+    return matches.slice(0, limit).map(m => m.sentence);
+  };
+
+  // Helper to construct fallback complete paragraph
+  const getCleanSummary = () => {
+    if (descClean && descClean.length > 30) {
+      return descClean.endsWith('.') ? descClean : `${descClean}.`;
+    }
+    return `Updates surrounding "${titleClean}".`;
+  };
+
+  // 1. Simplify / Explain
   if (msg.includes('simple') || msg.includes('simplify') || msg.includes('explain')) {
-    return `Based on the article context, here is a simplified summary: the news discusses "${article.title}". The key point is: "${article.description || 'a major development'}". This highlights ongoing changes involving stakeholders of ${article.source || 'this topic'}.`;
+    const matches = findMatchingSentences(['announce', 'decide', 'report', 'reveal', 'key', 'main', 'first', 'primary', 'official', 'statement', 'disclose'], 2);
+    if (matches.length > 0) {
+      return `Here is a simplified explanation based on the article details:\n\n${matches.map(s => `• ${s}.`).join('\n')}\n\n(Summary compiled by AI Assistant)`;
+    }
+    return `In simple terms: the news details "${titleClean}". The main report indicates: "${getCleanSummary()}"`;
   }
+
+  // 2. Before / Happened / Context / History
   if (msg.includes('before') || msg.includes('happened') || msg.includes('context') || msg.includes('history')) {
-    return `Prior to this, ${article.source || 'reporters'} documented the background context surrounding this issue. The situation evolved around: "${article.description || 'relevant ongoing events'}". These developments have directly culminated in the current state where ${article.title}.`;
+    const matches = findMatchingSentences(['previously', 'earlier', 'before', 'history', 'past', 'background', 'preceding', 'already', 'initial', 'last year', 'decade'], 2);
+    if (matches.length > 0) {
+      return `Based on the historical context mentioned in the article:\n\n${matches.map(s => `• ${s}.`).join('\n')}\n\n(Context compiled by AI Assistant)`;
+    }
+    return `Prior to this, ${article.source || 'reporters'} documented background context surrounding this issue. The situation previously evolved around: "${getCleanSummary()}"`;
   }
+
+  // 3. Benefit / Gain / Win
   if (msg.includes('benefit') || msg.includes('gain') || msg.includes('win')) {
-    return `Based on the article content, the primary beneficiaries appear to be parties aligned with: "${article.title}". Those representing or associated with ${article.author || article.source || 'the main entities'} stand to gain momentum or positive outcomes.`;
+    const matches = findMatchingSentences(['benefit', 'gain', 'advantage', 'win', 'profit', 'receive', 'positive', 'helpful', 'improve', 'growth', 'opportunity'], 2);
+    if (matches.length > 0) {
+      return `Based on the article body, the key beneficiaries or positive impacts identified are:\n\n${matches.map(s => `• ${s}.`).join('\n')}\n\n(Analysis compiled by AI Assistant)`;
+    }
+    return `Based on the article details, the primary beneficiaries appear to be parties aligned with the developments in: "${titleClean}". Stakeholders associated with ${article.source || 'the main entities'} stand to gain momentum or positive outcomes.`;
   }
-  if (msg.includes('lose') || msg.includes('hurt') || msg.includes('bad for')) {
-    return `Conversely, stakeholders, competing interests, or entities negatively impacted by: "${article.description || article.title}" appear to bear the costs or face challenges as a result of these developments.`;
+
+  // 4. Lose / Hurt / Bad for / Challenges
+  if (msg.includes('lose') || msg.includes('hurt') || msg.includes('bad for') || msg.includes('challenge')) {
+    const matches = findMatchingSentences(['loss', 'hurt', 'damage', 'fail', 'lose', 'decline', 'drop', 'impacted', 'negative', 'suffer', 'challenge', 'risk', 'fear', 'worry'], 2);
+    if (matches.length > 0) {
+      return `The article details the following concerns, challenges, or negative impacts:\n\n${matches.map(s => `• ${s}.`).join('\n')}\n\n(Analysis compiled by AI Assistant)`;
+    }
+    return `Conversely, stakeholders, competing interests, or entities negatively impacted by these updates face challenges or costs as a result of the developments reported in "${titleClean}".`;
   }
-  if (msg.includes('good or bad') || msg.includes('positive or negative') || msg.includes('assessment')) {
-    return `This development has mixed implications. It is positive for supporters of: "${article.title}" due to the progress made. However, it presents concerns or negative impacts for those affected by: "${article.description || 'the challenges mentioned'}".`;
+
+  // 5. Good or bad / Positive or negative / Assessment
+  if (msg.includes('good or bad') || msg.includes('positive or negative') || msg.includes('assessment') || msg.includes('opinion')) {
+    const matches = findMatchingSentences(['good', 'bad', 'mixed', 'reaction', 'assess', 'evaluate', 'opinion', 'support', 'critic', 'praise', 'oppose'], 2);
+    if (matches.length > 0) {
+      return `Here is an assessment from the article details:\n\n${matches.map(s => `• ${s}.`).join('\n')}\n\n(Assessment compiled by AI Assistant)`;
+    }
+    return `This development has mixed implications. It is positive for supporters of: "${titleClean}" due to the progress made. However, it presents challenges for those affected by: "${getCleanSummary()}"`;
   }
-  if (msg.includes('compare') || msg.includes('last year') || msg.includes('past')) {
-    return `Comparing this to previous occurrences, the scale and impact of: "${article.title}" shows updated progress. While past events laid the foundation, the current situation represents a new phase of activity reported by ${article.source}.`;
+
+  // 6. Compare / Last year / Past / Comparison
+  if (msg.includes('compare') || msg.includes('last year') || msg.includes('past') || msg.includes('comparison') || msg.includes('different')) {
+    const matches = findMatchingSentences(['compare', 'than', 'contrast', 'similar', 'different', 'increase', 'decrease', 'change', 'previous', 'former'], 2);
+    if (matches.length > 0) {
+      return `Comparing this to context in the article:\n\n${matches.map(s => `• ${s}.`).join('\n')}\n\n(Comparison compiled by AI Assistant)`;
+    }
+    return `Comparing this to previous occurrences, the scale and impact of: "${titleClean}" shows updated progress. While past events laid the foundation, the current situation represents a new phase of activity reported by ${article.source}.`;
   }
   
-  return `Based on the article details: ${article.description || article.title}. (Note: The AI Co-Pilot is currently running in local fallback mode to prevent service interruptions.)`;
+  // Custom user message (extractive fallback)
+  // Try to match keywords from the user's custom question to find matching sentences in the article
+  const questionWords = msg.replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 3);
+  if (questionWords.length > 0) {
+    const matches = findMatchingSentences(questionWords, 3);
+    if (matches.length > 0) {
+      return `Here are relevant details found in the article text matching your question:\n\n${matches.map(s => `• ${s}.`).join('\n')}\n\n(Extracted by AI Assistant)`;
+    }
+  }
+
+  return `Based on the article details: ${getCleanSummary()} (Note: The AI Co-Pilot is currently running in local fallback mode to prevent service interruptions.)`;
+};
+
+// Helper to fetch the full text content of an article from its URL
+export const fetchFullArticleText = async (url, article = null) => {
+  if (!url || url.includes('example.com')) return null;
+  try {
+    const response = await axios.get(url, { 
+      timeout: 5000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+      }
+    });
+    const html = response.data;
+    if (!html || typeof html !== 'string') return null;
+    
+    // Extract paragraph tags text to avoid headers, navigations, sidebars, and footers
+    const pRegex = /<p[^>]*>([\s\S]*?)<\/p>/gi;
+    let paragraphs = [];
+    let match;
+    while ((match = pRegex.exec(html)) !== null) {
+      const pText = match[1]
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (pText.length > 20) {
+        paragraphs.push(pText);
+      }
+    }
+    
+    let text = paragraphs.join(' ');
+    
+    // If <p> tags yielded very little content (less than 200 chars), fall back to general HTML text cleaning
+    if (text.length < 200) {
+      text = html
+        .replace(/<script[^>]*>([\s\S]*?)<\/script>/gi, '')
+        .replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, '')
+        .replace(/<head[^>]*>([\s\S]*?)<\/head>/gi, '')
+        .replace(/<header[^>]*>([\s\S]*?)<\/header>/gi, '')
+        .replace(/<nav[^>]*>([\s\S]*?)<\/nav>/gi, '')
+        .replace(/<footer[^>]*>([\s\S]*?)<\/footer>/gi, '')
+        .replace(/<aside[^>]*>([\s\S]*?)<\/aside>/gi, '')
+        .replace(/<noscript[^>]*>([\s\S]*?)<\/noscript>/gi, '')
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+    
+    // Check if the scraped text is likely just a paywall, subscription wall, or login page
+    const paywallKeywords = ['subscribe', 'subscription', 'logged in', 'login', 'sign in', 'cookie policy', 'paywall', 'create an account', 'member benefits'];
+    let paywallMatches = 0;
+    const lowerText = text.toLowerCase();
+    paywallKeywords.forEach(word => {
+      if (lowerText.includes(word)) paywallMatches++;
+    });
+
+    if (text.length < 300 || paywallMatches >= 3) {
+      return null; // Reject paywalls and very short/junk pages
+    }
+    
+    // If article metadata is passed, ensure the text contains at least one keyword from the title
+    if (article && article.title) {
+      const stopWords = new Set(['the', 'and', 'for', 'with', 'amid', 'will', 'till', 'this', 'that', 'from', 'have', 'more', 'about', 'after', 'under', 'their', 'there']);
+      const titleWords = article.title
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, '')
+        .split(/\s+/)
+        .filter(w => w.length >= 3 && !stopWords.has(w));
+      
+      const hasTitleKeywords = titleWords.length === 0 || titleWords.some(word => lowerText.includes(word));
+      if (!hasTitleKeywords) {
+        return null; // Reject text that is completely unrelated to the article title
+      }
+    }
+    
+    // Limit to first 4500 characters to keep prompt size reasonable
+    return text.substring(0, 4500);
+  } catch (error) {
+    console.warn(`Failed to fetch full article text from ${url}:`, error.message);
+    return null;
+  }
 };
 
 // Ask Gemini about a specific article's context
 export const askGeminiAboutArticle = async (article, message) => {
+  let fullContent = article.content || '';
+  let prompt = '';
   try {
-    const prompt = `You are a helpful and intelligent news reading assistant. You are helping a user understand a news article.
+    if (article.url) {
+      const fetchedText = await fetchFullArticleText(article.url, article);
+      if (fetchedText) {
+        fullContent = fetchedText;
+      }
+    }
+
+    prompt = `You are a helpful and intelligent news reading assistant. You are helping a user understand a news article.
     
 Article Title: ${article.title}
 Source: ${article.source}
 Author: ${article.author || 'Unknown'}
 Description: ${article.description || ''}
-Content: ${article.content || ''}
+URL: ${article.url || ''}
+Full Article Text Content:
+${fullContent}
 
 The user asks: "${message}"
 
-Please answer the user's question concisely, clearly, and directly based on the article's details and any necessary context. Limit your answer to 150 words. Use simple formatting (like bold text or bullet points) if helpful to make it highly readable.`;
+Please answer the user's question concisely, clearly, and directly based on the full article details provided above. Limit your answer to 150 words. Use simple formatting (like bold text or bullet points) if helpful to make it highly readable.`;
 
     const response = await axios.post(
       `${GEMINI_API_URL}?key=${GEMINI_API_KEY}`,
@@ -594,13 +1046,106 @@ Please answer the user's question concisely, clearly, and directly based on the 
         contents: [{
           parts: [{ text: prompt }]
         }]
-      }
+      },
+      { timeout: 15000 }
     );
 
     const reply = response.data.candidates[0].content.parts[0].text;
     return reply;
   } catch (error) {
-    console.warn('Gemini chat API failed, returning fallback response:', error.message);
-    return generateFallbackChatResponse(article, message);
+    console.warn('Gemini chat API failed, trying Groq:', error.message);
+    if (GROQ_API_KEY) {
+      try {
+        const response = await axios.post(
+          GROQ_API_URL,
+          {
+            model: 'llama-3.3-70b-versatile',
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 0.2
+          },
+          {
+            headers: {
+              'Authorization': `Bearer ${GROQ_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            timeout: 15000
+          }
+        );
+        const reply = response.data.choices[0].message.content;
+        return reply;
+      } catch (groqError) {
+        console.error('Groq chat fallback failed too, returning local fallback:', groqError.message);
+      }
+    }
+    return generateFallbackChatResponse(article, message, fullContent);
+  }
+};
+
+// Generate exactly 5 insights from the full text content of an article
+export const generateSingleArticleInsights = async (article, fullContent) => {
+  let prompt = '';
+  try {
+    prompt = `You are an expert news analyst. Analyze the full article text provided below and generate exactly 5 distinct, high-quality key insights. Do not base the insights solely on the title or description; you must extract valuable facts, events, key figures, or contexts described in the body of the article.
+    
+Each insight must be a complete, grammatically correct, detailed sentence of 12 to 20 words. Do not return short phrases, incomplete sentences, or truncated lines under any circumstances. Ensure every insight is a fully formed, self-contained statement.
+
+Article Title: ${article.title}
+Source: ${article.source}
+Full Article Text:
+${fullContent}
+
+Return a JSON array containing exactly 5 string elements (e.g., ["Insight 1", "Insight 2", "Insight 3", "Insight 4", "Insight 5"]). Return ONLY the raw JSON array, no markdown.`;
+
+    const response = await axios.post(
+      `${GEMINI_API_URL}?key=${GEMINI_API_KEY}`,
+      {
+        contents: [{
+          parts: [{ text: prompt }]
+        }]
+      },
+      { timeout: 15000 }
+    );
+
+    const text = response.data.candidates[0].content.parts[0].text;
+    const jsonMatch = text.match(/\[.*\]/s);
+    if (!jsonMatch) throw new Error('Failed to parse JSON response');
+    const array = JSON.parse(jsonMatch[0]);
+    if (Array.isArray(array) && array.length > 0) {
+      return array.slice(0, 5);
+    }
+    throw new Error('Response is not a valid array');
+  } catch (error) {
+    console.warn('Gemini insights API failed, trying Groq:', error.message);
+    if (GROQ_API_KEY) {
+      try {
+        const response = await axios.post(
+          GROQ_API_URL,
+          {
+            model: 'llama-3.3-70b-versatile',
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 0.1,
+            response_format: { type: 'json_object' }
+          },
+          {
+            headers: {
+              'Authorization': `Bearer ${GROQ_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            timeout: 15000
+          }
+        );
+        const text = response.data.choices[0].message.content;
+        const jsonMatch = text.match(/\[.*\]/s);
+        if (jsonMatch) {
+          const array = JSON.parse(jsonMatch[0]);
+          if (Array.isArray(array) && array.length > 0) {
+            return array.slice(0, 5);
+          }
+        }
+      } catch (groqError) {
+        console.error('Groq insights fallback failed too, returning local fallback:', groqError.message);
+      }
+    }
+    return generateFallbackInsights(article, fullContent);
   }
 };

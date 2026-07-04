@@ -10,6 +10,40 @@ interface ArticleDetailProps {
   onBack: () => void;
 }
 
+const formatMessageText = (text: string) => {
+  const lines = text.split('\n');
+  return lines.map((line, lineIdx) => {
+    let cleanLine = line.trim();
+    const isBullet = cleanLine.startsWith('* ') || cleanLine.startsWith('- ');
+    if (isBullet) {
+      cleanLine = cleanLine.slice(2);
+    }
+
+    const parts = cleanLine.split(/(\*\*.*?\*\*)/g);
+    const parsedLine = parts.map((part, partIdx) => {
+      if (part.startsWith('**') && part.endsWith('**')) {
+        return <strong key={partIdx}>{part.slice(2, -2)}</strong>;
+      }
+      return part;
+    });
+
+    if (isBullet) {
+      return (
+        <div key={lineIdx} style={{ display: 'flex', gap: '8px', margin: '4px 0', paddingLeft: '8px' }}>
+          <span style={{ color: 'inherit', opacity: 0.8 }}>•</span>
+          <div>{parsedLine}</div>
+        </div>
+      );
+    }
+
+    return (
+      <div key={lineIdx} style={{ minHeight: line.trim() === '' ? '8px' : 'auto' }}>
+        {parsedLine}
+      </div>
+    );
+  });
+};
+
 export const ArticleDetail: React.FC<ArticleDetailProps> = ({ article, onBack }) => {
   const { markArticleAsRead } = useStore();
   const { theme } = useTheme();
@@ -19,8 +53,26 @@ export const ArticleDetail: React.FC<ArticleDetailProps> = ({ article, onBack })
   const isDark = theme === 'dark';
   const isSaved = isArticleSaved(article.id);
 
+  const [insights, setInsights] = useState<string[]>(article.insights || []);
+  const [loadingInsights, setLoadingInsights] = useState(true);
+
   useEffect(() => {
     markArticleAsRead(article.id);
+
+    const fetchFullInsights = async () => {
+      try {
+        setLoadingInsights(true);
+        const data = await newsAPI.getArticleInsights(article);
+        if (data.insights && data.insights.length > 0) {
+          setInsights(data.insights);
+        }
+      } catch (err) {
+        console.error('Error loading full-text insights:', err);
+      } finally {
+        setLoadingInsights(false);
+      }
+    };
+    fetchFullInsights();
   }, [article.id]);
 
   // AI Chat States
@@ -94,19 +146,24 @@ export const ArticleDetail: React.FC<ArticleDetailProps> = ({ article, onBack })
         onMouseEnter={() => setBackHovered(true)}
         onMouseLeave={() => setBackHovered(false)}
         style={{
+          position: 'sticky',
+          top: '20px',
+          zIndex: 10,
           marginBottom: '24px',
           padding: '12px 24px',
           border: '1px solid var(--border-color)',
           borderRadius: '9999px',
           backgroundColor: 'var(--glass-bg)',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
           color: 'var(--text-primary)',
           cursor: 'pointer',
           fontSize: '14px',
           fontWeight: '700',
-          display: 'flex',
+          display: 'inline-flex',
           alignItems: 'center',
           gap: '8px',
-          boxShadow: 'var(--shadow-sm)',
+          boxShadow: 'var(--shadow-md)',
           transition: 'all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
           transform: backHovered ? 'translateX(-4px)' : 'translateX(0)'
         }}
@@ -263,7 +320,7 @@ export const ArticleDetail: React.FC<ArticleDetailProps> = ({ article, onBack })
           </p>
         )}
 
-        {article.insights && article.insights.length > 0 && (
+        {insights && insights.length > 0 && (
           <div 
             style={{ 
               margin: '0 0 30px 0', 
@@ -282,7 +339,7 @@ export const ArticleDetail: React.FC<ArticleDetailProps> = ({ article, onBack })
               marginBottom: '16px',
               fontFamily: 'var(--font-heading)'
             }}>
-              ✨ Key Insights Summary
+              ✨ Key Insights Summary {loadingInsights && <span style={{ fontSize: '11px', fontWeight: 'normal', color: 'var(--text-secondary)', marginLeft: '8px', textTransform: 'none', letterSpacing: '0' }}>(updating from full article...)</span>}
             </h3>
             <ul style={{
               margin: 0,
@@ -294,7 +351,7 @@ export const ArticleDetail: React.FC<ArticleDetailProps> = ({ article, onBack })
               flexDirection: 'column',
               gap: '8px'
             }}>
-              {article.insights.map((insight, idx) => (
+              {insights.map((insight, idx) => (
                 <li key={idx} style={{ listStyleType: 'disc' }}>
                   {insight}
                 </li>
@@ -302,87 +359,7 @@ export const ArticleDetail: React.FC<ArticleDetailProps> = ({ article, onBack })
             </ul>
           </div>
         )}
-        {article.timeline && article.timeline.length > 0 && (
-          <div 
-            style={{ 
-              margin: '0 0 30px 0', 
-              padding: '28px 24px',
-              backgroundColor: isDark ? 'rgba(30, 41, 59, 0.3)' : '#f8fafc',
-              border: '1px solid var(--border-color)',
-              borderRadius: '16px'
-            }}
-          >
-            <h3 style={{
-              fontSize: '14px',
-              fontWeight: '800',
-              textTransform: 'uppercase',
-              letterSpacing: '1px',
-              color: 'var(--accent-purple)',
-              marginBottom: '20px',
-              fontFamily: 'var(--font-heading)',
-              textAlign: 'left'
-            }}>
-              📅 Timeline of the Story
-            </h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {article.timeline.map((step, idx) => (
-                <div key={idx} style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                    <div style={{
-                      width: '10px',
-                      height: '10px',
-                      borderRadius: '50%',
-                      backgroundColor: idx === article.timeline!.length - 1 ? 'var(--accent-purple)' : 'var(--text-secondary)',
-                      marginTop: '4px',
-                      boxShadow: idx === article.timeline!.length - 1 ? '0 0 10px var(--accent-purple)' : 'none'
-                    }} />
-                    {idx < article.timeline!.length - 1 && (
-                      <div style={{
-                        width: '1px',
-                        height: '36px',
-                        borderLeft: '1px dashed var(--border-color)',
-                        margin: '6px 0'
-                      }} />
-                    )}
-                  </div>
-                  <div style={{ textAlign: 'left' }}>
-                    <span style={{
-                      fontSize: '12px',
-                      fontWeight: '800',
-                      textTransform: 'uppercase',
-                      color: idx === article.timeline!.length - 1 ? 'var(--accent-purple)' : 'var(--text-secondary)',
-                      display: 'block',
-                      lineHeight: '1.2'
-                    }}>
-                      {step.date}
-                    </span>
-                    <span style={{
-                      fontSize: '15px',
-                      color: 'var(--text-primary)',
-                      fontWeight: '500',
-                      display: 'block',
-                      marginTop: '4px',
-                      lineHeight: '1.4'
-                    }}>
-                      {step.event}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
 
-        {article.content && (
-          <div style={{
-            fontSize: '16px',
-            lineHeight: '1.8',
-            color: 'var(--text-secondary)',
-            marginBottom: '36px'
-          }}>
-            {article.content}
-          </div>
-        )}
 
         {/* AI Reading Assistant Chat Section */}
         <div style={{
@@ -460,10 +437,9 @@ export const ArticleDetail: React.FC<ArticleDetailProps> = ({ article, onBack })
                   lineHeight: '1.5',
                   fontWeight: '500',
                   boxShadow: 'var(--shadow-sm)',
-                  whiteSpace: 'pre-line',
                   textAlign: 'left'
                 }}>
-                  {msg.text}
+                  {formatMessageText(msg.text)}
                 </div>
               </div>
             ))}

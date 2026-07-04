@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { supabase } from '../services/supabaseClient';
 
 interface User {
   id: string;
@@ -21,6 +22,8 @@ interface AuthContextType {
   saveArticle: (articleId: string) => void;
   unsaveArticle: (articleId: string) => void;
   isArticleSaved: (articleId: string) => boolean;
+  updateEmail: (email: string) => Promise<AuthResult>;
+  updatePassword: (password: string) => Promise<AuthResult>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -34,11 +37,14 @@ interface AuthProviderProps {
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
 
-  // Verification hook on mount to check existing session tokens
+  // Verification hook on mount to check existing session tokens and listen to auth changes
   useEffect(() => {
-    const checkAuth = async () => {
-      const token = localStorage.getItem('newsNexusToken');
-      if (token) {
+    let active = true;
+
+    const checkAuthAndSync = async (session: any) => {
+      if (session) {
+        const token = session.access_token;
+        localStorage.setItem('newsNexusToken', token);
         try {
           const response = await fetch(`${API_BASE}/user/me`, {
             headers: {
@@ -48,34 +54,73 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           
           if (response.ok) {
             const data = await response.json();
-            setUser(data.user);
+            if (active) {
+              setUser(data.user);
+            }
           } else {
-            localStorage.removeItem('newsNexusToken');
+            // Fallback user state in case the server has a temporary error
+            if (active) {
+              setUser({
+                id: session.user.id,
+                email: session.user.email || '',
+                name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || '',
+                savedArticles: []
+              });
+            }
           }
         } catch (error) {
           console.error('Session verification error:', error);
-          localStorage.removeItem('newsNexusToken');
+          if (active) {
+            setUser({
+              id: session.user.id,
+              email: session.user.email || '',
+              name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || '',
+              savedArticles: []
+            });
+          }
+        }
+      } else {
+        localStorage.removeItem('newsNexusToken');
+        if (active) {
+          setUser(null);
         }
       }
     };
-    checkAuth();
+
+    const initSession = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        await checkAuthAndSync(session);
+      } catch (err) {
+        console.error('Error getting initial session:', err);
+      }
+    };
+    initSession();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      await checkAuthAndSync(session);
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const signup = async (email: string, password: string, name: string): Promise<AuthResult> => {
     try {
-      const response = await fetch(`${API_BASE}/user/signup`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, name })
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: { name }
+        }
       });
       
-      const data = await response.json();
-      if (!response.ok) {
-        return { success: false, error: data.error || 'Registration failed' };
+      if (error) {
+        return { success: false, error: error.message };
       }
       
-      localStorage.setItem('newsNexusToken', data.token);
-      setUser(data.user);
       return { success: true };
     } catch (error: any) {
       console.error('Signup error:', error);
@@ -85,19 +130,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const login = async (email: string, password: string): Promise<AuthResult> => {
     try {
-      const response = await fetch(`${API_BASE}/user/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password
       });
       
-      const data = await response.json();
-      if (!response.ok) {
-        return { success: false, error: data.error || 'Authentication failed' };
+      if (error) {
+        return { success: false, error: error.message };
       }
       
-      localStorage.setItem('newsNexusToken', data.token);
-      setUser(data.user);
       return { success: true };
     } catch (error: any) {
       console.error('Login error:', error);
@@ -105,9 +146,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  const logout = () => {
-    setUser(null);
-    localStorage.removeItem('newsNexusToken');
+  const logout = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
   };
 
   const saveArticle = async (articleId: string) => {
@@ -163,6 +207,30 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     return user.savedArticles.includes(articleId);
   };
 
+  const updateEmail = async (email: string): Promise<AuthResult> => {
+    try {
+      const { data, error } = await supabase.auth.updateUser({ email });
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to update email' };
+    }
+  };
+
+  const updatePassword = async (password: string): Promise<AuthResult> => {
+    try {
+      const { data, error } = await supabase.auth.updateUser({ password });
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to update password' };
+    }
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -173,7 +241,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         logout,
         saveArticle,
         unsaveArticle,
-        isArticleSaved
+        isArticleSaved,
+        updateEmail,
+        updatePassword
       }}
     >
       {children}

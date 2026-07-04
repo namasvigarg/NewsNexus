@@ -15,6 +15,7 @@ export const Signup: React.FC<SignupProps> = ({ onSwitchToLogin }) => {
   const [focusedField, setFocusedField] = useState<'name' | 'email' | 'password' | 'confirm' | null>(null);
   
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   
   const { signup } = useAuth();
   const { theme } = useTheme();
@@ -23,6 +24,7 @@ export const Signup: React.FC<SignupProps> = ({ onSwitchToLogin }) => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setSuccess('');
     
     if (!name || !email || !password || !confirmPassword) {
       setError('Please fill in all fields.');
@@ -45,6 +47,12 @@ export const Signup: React.FC<SignupProps> = ({ onSwitchToLogin }) => {
 
     if (!result.success) {
       setError(result.error || 'Signup failed.');
+    } else {
+      setSuccess('Account created! Please check your email inbox to confirm your registration.');
+      setName('');
+      setEmail('');
+      setPassword('');
+      setConfirmPassword('');
     }
   };
 
@@ -111,6 +119,23 @@ export const Signup: React.FC<SignupProps> = ({ onSwitchToLogin }) => {
             animation: 'fadeIn 0.3s'
           }}>
             ⚠️ {error}
+          </div>
+        )}
+
+        {/* Success Message Box */}
+        {success && (
+          <div style={{
+            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+            border: '1px solid rgba(16, 185, 129, 0.3)',
+            color: '#10b981',
+            padding: '12px 16px',
+            borderRadius: '12px',
+            fontSize: '14px',
+            fontWeight: '600',
+            marginBottom: '20px',
+            animation: 'fadeIn 0.3s'
+          }}>
+            ✅ {success}
           </div>
         )}
 

@@ -1,5 +1,5 @@
 import express from 'express';
-import { fetchNews, searchNews, getNewsByCategory, askGeminiAboutArticle } from '../services/newsService.js';
+import { fetchNews, searchNews, getNewsByCategory, askGeminiAboutArticle, generateSingleArticleInsights, fetchFullArticleText } from '../services/newsService.js';
 
 const router = express.Router();
 
@@ -49,6 +49,29 @@ router.post('/chat', async (req, res) => {
     }
     const reply = await askGeminiAboutArticle(article, message);
     res.json({ reply });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get full-text insights for an article
+router.post('/insights', async (req, res) => {
+  try {
+    const { article } = req.body;
+    if (!article || !article.url) {
+      return res.status(400).json({ error: 'Article URL is required' });
+    }
+    
+    let fullContent = article.content || '';
+    if (article.url) {
+      const fetchedText = await fetchFullArticleText(article.url, article);
+      if (fetchedText) {
+        fullContent = fetchedText;
+      }
+    }
+    
+    const insights = await generateSingleArticleInsights(article, fullContent);
+    res.json({ insights });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

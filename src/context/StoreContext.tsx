@@ -47,13 +47,22 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children }) => {
   });
 
   useEffect(() => {
-    if (!userId) {
-      setUserPreferences({
-        categories: [],
-        interests: [],
-        sources: [],
-        readArticles: []
-      });
+    if (!userId || userId === 'guest') {
+      const guestPrefs = localStorage.getItem('newsNexusGuestPreferences');
+      if (guestPrefs) {
+        try {
+          setUserPreferences(JSON.parse(guestPrefs));
+        } catch (e) {
+          console.error('Error parsing guest preferences:', e);
+        }
+      } else {
+        setUserPreferences({
+          categories: [],
+          interests: [],
+          sources: [],
+          readArticles: []
+        });
+      }
       return;
     }
     const loadPreferences = async () => {
@@ -199,6 +208,19 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children }) => {
   };
 
   const updateUserPreferences = async (prefs: Partial<UserPreferences>) => {
+    if (!userId || userId === 'guest') {
+      setUserPreferences(prev => {
+        const updated = {
+          ...prev,
+          categories: prefs.categories || prev.categories,
+          interests: prefs.interests || prev.interests,
+          sources: prefs.sources || prev.sources
+        };
+        localStorage.setItem('newsNexusGuestPreferences', JSON.stringify(updated));
+        return updated;
+      });
+      return;
+    }
     try {
       const updated = await newsAPI.updateUserPreferences(userId, prefs);
       setUserPreferences(updated);
@@ -208,37 +230,57 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children }) => {
   };
 
   const markArticleAsRead = async (articleId: string) => {
-    try {
-      await newsAPI.markArticleAsRead(userId, articleId);
-      setUserPreferences(prev => ({
+    // 1. Update local state immediately
+    setUserPreferences(prev => {
+      if (prev.readArticles.includes(articleId)) return prev;
+      const updated = {
         ...prev,
         readArticles: [...prev.readArticles, articleId]
-      }));
-
-      // Log read event dynamically for dashboard analytics
-      const article = newsState.articles.find(a => a.id === articleId) || 
-                      recommendationState.recommendations.find(a => a.id === articleId);
-                      
-      const logsKey = `newsNexusReadLogs_${userId}`;
-      const existingLogs = JSON.parse(localStorage.getItem(logsKey) || '[]');
-      
-      if (!existingLogs.some((l: any) => l.articleId === articleId)) {
-        const text = article ? `${article.title} ${article.description || ''} ${article.content || ''}` : '';
-        const wordsCount = text.split(/\s+/).filter(Boolean).length;
-        const readingTimeMin = Math.max(1, Math.round(wordsCount / 200)) || 2; // standard reading speed
-        
-        const logEntry = {
-          articleId,
-          timestamp: Date.now(),
-          category: article?.category || 'general',
-          source: article?.source || 'General News',
-          readingTimeMin
-        };
-        existingLogs.push(logEntry);
-        localStorage.setItem(logsKey, JSON.stringify(existingLogs));
+      };
+      if (!userId || userId === 'guest') {
+        localStorage.setItem('newsNexusGuestPreferences', JSON.stringify(updated));
       }
-    } catch (error) {
-      console.error('Error marking article as read:', error);
+      return updated;
+    });
+
+    // 2. Log read event dynamically for dashboard analytics
+    const article = newsState.articles.find(a => a.id === articleId) || 
+                    recommendationState.recommendations.find(a => a.id === articleId);
+                    
+    // Cache the full article object locally so it's always available in the Reading History list
+    const readArticlesKey = `newsNexusReadArticlesList_${userId}`;
+    const savedReadArticles = JSON.parse(localStorage.getItem(readArticlesKey) || '[]');
+    if (article && !savedReadArticles.some((a: any) => a.id === article.id)) {
+      savedReadArticles.push(article);
+      localStorage.setItem(readArticlesKey, JSON.stringify(savedReadArticles));
+    }
+                    
+    const logsKey = `newsNexusReadLogs_${userId}`;
+    const existingLogs = JSON.parse(localStorage.getItem(logsKey) || '[]');
+    
+    if (!existingLogs.some((l: any) => l.articleId === articleId)) {
+      const text = article ? `${article.title} ${article.description || ''} ${article.content || ''}` : '';
+      const wordsCount = text.split(/\s+/).filter(Boolean).length;
+      const readingTimeMin = Math.max(1, Math.round(wordsCount / 200)) || 2; // standard reading speed
+      
+      const logEntry = {
+        articleId,
+        timestamp: Date.now(),
+        category: article?.category || 'general',
+        source: article?.source || 'General News',
+        readingTimeMin
+      };
+      existingLogs.push(logEntry);
+      localStorage.setItem(logsKey, JSON.stringify(existingLogs));
+    }
+
+    // 3. Try to save on server only for authenticated users
+    if (userId && userId !== 'guest') {
+      try {
+        await newsAPI.markArticleAsRead(userId, articleId);
+      } catch (error) {
+        console.error('Error marking article as read on server:', error);
+      }
     }
   };
 

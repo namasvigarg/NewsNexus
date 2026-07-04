@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { supabase } from '../services/supabase.js';
 
 const router = express.Router();
 
@@ -77,8 +78,43 @@ const verifyToken = (token) => {
   }
 };
 
+// Helper to ensure a user exists in the local JSON database
+const ensureUserExists = (userId, email, name) => {
+  const accounts = loadJSON(USERS_FILE, {});
+  let account = accounts[userId];
+  let changed = false;
+
+  if (!account && email) {
+    account = {
+      id: userId,
+      email: email.toLowerCase().trim(),
+      name: name || email.split('@')[0],
+      savedArticles: []
+    };
+    accounts[userId] = account;
+    changed = true;
+  }
+
+  if (changed) {
+    saveJSON(USERS_FILE, accounts);
+  }
+
+  const preferences = loadJSON(PREFS_FILE, {});
+  if (!preferences[userId]) {
+    preferences[userId] = {
+      categories: [],
+      interests: [],
+      sources: [],
+      readArticles: []
+    };
+    saveJSON(PREFS_FILE, preferences);
+  }
+
+  return account;
+};
+
 // Authentication Middleware
-const authMiddleware = (req, res, next) => {
+const authMiddleware = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
   if (!authHeader) {
     return res.status(401).json({ error: 'Authorization header required' });
@@ -87,12 +123,30 @@ const authMiddleware = (req, res, next) => {
   if (!token) {
     return res.status(401).json({ error: 'Token required' });
   }
-  const userId = verifyToken(token);
-  if (!userId) {
-    return res.status(401).json({ error: 'Invalid or expired token' });
+  
+  try {
+    // Attempt to verify with Supabase Auth
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    
+    if (error || !user) {
+      // Fallback to custom token verification for backward compatibility
+      const oldUserId = verifyToken(token);
+      if (oldUserId) {
+        req.userId = oldUserId;
+        ensureUserExists(oldUserId);
+        return next();
+      }
+      return res.status(401).json({ error: error ? error.message : 'Invalid or expired token' });
+    }
+    
+    req.userId = user.id;
+    req.supabaseUser = user;
+    ensureUserExists(user.id, user.email, user.user_metadata?.name);
+    next();
+  } catch (err) {
+    console.error('Auth verification error:', err);
+    return res.status(401).json({ error: 'Authentication failed' });
   }
-  req.userId = userId;
-  next();
 };
 
 // User Registration Route

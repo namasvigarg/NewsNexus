@@ -115,19 +115,6 @@ export const ArticleCard: React.FC<ArticleCardProps> = ({ article, onClick, show
             {article.source}
           </span>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            {showRelevanceScore && article.relevanceScore !== undefined && (
-              <span style={{
-                fontSize: '11px',
-                padding: '4px 10px',
-                background: 'var(--gradient-accent)',
-                color: 'white',
-                borderRadius: '9999px',
-                fontWeight: '700',
-                boxShadow: '0 4px 10px rgba(124, 58, 237, 0.2)'
-              }}>
-                {article.relevanceScore > 0 ? `Match: ${article.relevanceScore}` : 'New'}
-              </span>
-            )}
             <button
               onClick={handleBookmark}
               title={isSaved ? 'Remove from saved' : 'Save article'}
