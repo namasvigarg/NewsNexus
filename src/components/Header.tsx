@@ -41,18 +41,21 @@ export const Header: React.FC<HeaderProps> = ({ onSearch }) => {
       }}
     >
       <h1 
-        className="gradient-text"
         style={{ 
           margin: 0, 
           fontSize: '26px', 
           fontWeight: '800', 
           fontFamily: 'var(--font-heading)',
           letterSpacing: '-0.75px',
-          cursor: 'pointer'
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px'
         }}
         onClick={() => window.location.reload()}
       >
-        📰 NewsNexus
+        <span>📰</span>
+        <span className="gradient-text">NewsNexus</span>
       </h1>
       
       {user && (

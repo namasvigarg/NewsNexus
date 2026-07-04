@@ -88,13 +88,18 @@ export const Signup: React.FC<SignupProps> = ({ onSwitchToLogin }) => {
         }}
       >
         <div style={{ textAlign: 'center', marginBottom: '28px' }}>
-          <h1 className="gradient-text" style={{ 
+          <h1 style={{ 
             fontSize: '36px', 
             fontWeight: '800',
             marginBottom: '10px',
-            letterSpacing: '-0.5px'
+            letterSpacing: '-0.5px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '12px'
           }}>
-            📰 NewsNexus
+            <span>📰</span>
+            <span className="gradient-text">NewsNexus</span>
           </h1>
           <p style={{ 
             color: 'var(--text-secondary)',

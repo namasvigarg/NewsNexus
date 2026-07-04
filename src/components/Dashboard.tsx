@@ -11,7 +11,7 @@ interface DashboardProps {
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({ onArticleClick }) => {
-  const { user, isAuthenticated, updateEmail, updatePassword } = useAuth();
+  const { user, isAuthenticated, updateEmail, updatePassword, logout } = useAuth();
   const { newsState, userPreferences, updateUserPreferences } = useStore();
   const { theme } = useTheme();
   const [activeTab, setActiveTab] = useState<'profile' | 'preferences' | 'history' | 'analytics'>('profile');
@@ -617,30 +617,57 @@ export const Dashboard: React.FC<DashboardProps> = ({ onArticleClick }) => {
                   </button>
                 </div>
               ) : (
-                <button
-                  onClick={() => setEditMode(true)}
-                  style={{
-                    width: '100%',
-                    padding: '14px',
-                    borderRadius: '12px',
-                    border: '1px solid var(--border-color)',
-                    backgroundColor: 'var(--glass-bg)',
-                    color: 'var(--text-primary)',
-                    fontWeight: '700',
-                    cursor: 'pointer',
-                    transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.borderColor = 'var(--accent-purple)';
-                    e.currentTarget.style.transform = 'translateY(-2px)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.borderColor = 'var(--border-color)';
-                    e.currentTarget.style.transform = 'translateY(0)';
-                  }}
-                >
-                  ✏️ Edit Profile Settings
-                </button>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <button
+                    onClick={() => setEditMode(true)}
+                    style={{
+                      width: '100%',
+                      padding: '14px',
+                      borderRadius: '12px',
+                      border: '1px solid var(--border-color)',
+                      backgroundColor: 'var(--glass-bg)',
+                      color: 'var(--text-primary)',
+                      fontWeight: '700',
+                      cursor: 'pointer',
+                      transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.borderColor = 'var(--accent-purple)';
+                      e.currentTarget.style.transform = 'translateY(-2px)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.borderColor = 'var(--border-color)';
+                      e.currentTarget.style.transform = 'translateY(0)';
+                    }}
+                  >
+                    ✏️ Edit Profile Settings
+                  </button>
+                  
+                  <button
+                    onClick={logout}
+                    style={{
+                      width: '100%',
+                      padding: '14px',
+                      borderRadius: '12px',
+                      border: '1px solid #ef4444',
+                      backgroundColor: 'rgba(239, 68, 68, 0.05)',
+                      color: '#ef4444',
+                      fontWeight: '700',
+                      cursor: 'pointer',
+                      transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.1)';
+                      e.currentTarget.style.transform = 'translateY(-2px)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.05)';
+                      e.currentTarget.style.transform = 'translateY(0)';
+                    }}
+                  >
+                    🚪 Sign Out
+                  </button>
+                </div>
               )}
             </div>
           </div>
